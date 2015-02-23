@@ -28,8 +28,6 @@ bit of i18n-related overhead in certain places of the framework. If you don't
 use internationalization, you should take the two seconds to set
 :setting:`USE_I18N = False <USE_I18N>` in your settings file. Then Django will
 make some optimizations so as not to load the internationalization machinery.
-You'll probably also want to remove ``'django.core.context_processors.i18n'``
-from your :setting:`TEMPLATE_CONTEXT_PROCESSORS` setting.
 
 .. note::
 
@@ -111,7 +109,7 @@ Translation works on variables. Again, here's an identical example::
 
 (The caveat with using variables or computed values, as in the previous two
 examples, is that Django's translation-string-detecting utility,
-:djadmin:`django-admin.py makemessages <makemessages>`, won't be able to find
+:djadmin:`django-admin makemessages <makemessages>`, won't be able to find
 these strings. More on :djadmin:`makemessages` later.)
 
 The strings you pass to ``_()`` or ``ugettext()`` can take placeholders,
@@ -124,7 +122,7 @@ specified with Python's standard named-string interpolation syntax. Example::
 This technique lets language-specific translations reorder the placeholder
 text. For example, an English translation may be ``"Today is November 26."``,
 while a Spanish translation may be ``"Hoy es 26 de Noviembre."`` -- with the
-the month and the day placeholders swapped.
+month and the day placeholders swapped.
 
 For this reason, you should use named-string interpolation (e.g., ``%(day)s``)
 instead of positional interpolation (e.g., ``%s`` or ``%d``) whenever you
@@ -260,7 +258,7 @@ In a case like this, consider something like the following::
             'plural_name': Report._meta.verbose_name_plural
         }
 
-    You would get an error when running :djadmin:`django-admin.py
+    You would get an error when running :djadmin:`django-admin
     compilemessages <compilemessages>`::
 
         a format specification for argument 'name', as in 'msgstr[0]', doesn't exist in 'msgid'
@@ -529,7 +527,7 @@ Internationalization: in template code
 
 .. highlightlang:: html+django
 
-Translations in :doc:`Django templates </topics/templates>` uses two template
+Translations in :doc:`Django templates </ref/templates/language>` uses two template
 tags and a slightly different syntax than in Python code. To give your template
 access to these tags, put ``{% load i18n %}`` toward the top of your template.
 As with all template tags, this tag needs to be loaded in all templates which
@@ -628,6 +626,9 @@ You can use multiple expressions inside a single ``blocktrans`` tag::
 .. note:: The previous more verbose format is still supported:
    ``{% blocktrans with book|title as book_t and author|title as author_t %}``
 
+Other block tags (for example ``{% for %}`` or ``{% if %}``) are not allowed
+inside a ``blocktrans`` tag.
+
 If resolving one of the block arguments fails, blocktrans will fall back to
 the default language by deactivating the currently active language
 temporarily with the :func:`~django.utils.translation.deactivate_all`
@@ -697,11 +698,6 @@ For instance, the following ``{% blocktrans %}`` tag::
 will result in the entry ``"First sentence. Second paragraph."`` in the PO file,
 compared to ``"\n  First sentence.\n  Second sentence.\n"``, if the ``trimmed``
 option had not been specified.
-
-.. versionchanged:: 1.7
-
-    The ``trimmed`` option was added.
-
 
 String literals passed to tags and filters
 ------------------------------------------
@@ -809,27 +805,28 @@ the second will always be in English.
 Other tags
 ----------
 
-Each ``RequestContext`` has access to three translation-specific variables:
-
-* ``LANGUAGES`` is a list of tuples in which the first element is the
-  :term:`language code` and the second is the language name (translated into
-  the currently active locale).
-
-* ``LANGUAGE_CODE`` is the current user's preferred language, as a string.
-  Example: ``en-us``. (See :ref:`how-django-discovers-language-preference`.)
-
-* ``LANGUAGE_BIDI`` is the current locale's direction. If True, it's a
-  right-to-left language, e.g.: Hebrew, Arabic. If False it's a
-  left-to-right language, e.g.: English, French, German etc.
-
-If you don't use the ``RequestContext`` extension, you can get those values with
-three tags::
-
-    {% get_current_language as LANGUAGE_CODE %}
-    {% get_available_languages as LANGUAGES %}
-    {% get_current_language_bidi as LANGUAGE_BIDI %}
-
 These tags also require a ``{% load i18n %}``.
+
+* ``{% get_available_languages as LANGUAGES %}`` returns a list of tuples in
+  which the first element is the :term:`language code` and the second is the
+  language name (translated into the currently active locale).
+
+* ``{% get_current_language as LANGUAGE_CODE %}`` returns the current user's
+  preferred language, as a string.  Example: ``en-us``. (See
+  :ref:`how-django-discovers-language-preference`.)
+
+* ``{% get_current_language_bidi as LANGUAGE_BIDI %}`` returns the current
+  locale's direction. If True, it's a right-to-left language, e.g.: Hebrew,
+  Arabic. If False it's a left-to-right language, e.g.: English, French, German
+  etc.
+
+If you enable the ``django.template.context_processors.i18n`` context processor
+then each ``RequestContext`` will have access to ``LANGUAGES``,
+``LANGUAGE_CODE``, and ``LANGUAGE_BIDI`` as defined above.
+
+.. versionchanged:: 1.8
+
+    The ``i18n`` context processor is not enabled by default for new projects.
 
 You can also retrieve information about any of the available languages using
 provided template tags and filters. To get information about a single language,
@@ -851,15 +848,14 @@ information for a list of languages (e.g. active languages as specified in
 view <set_language-redirect-view>` for an example of how to display a language
 selector using ``{% get_language_info_list %}``.
 
-In addition to :setting:`LANGUAGES` style nested tuples,
+In addition to :setting:`LANGUAGES` style list of tuples,
 ``{% get_language_info_list %}`` supports simple lists of language codes.
 If you do this in your view:
 
 .. code-block:: python
 
-    return render_to_response('mytemplate.html', {
-        'available_languages': ['en', 'es', 'fr'],
-    }, RequestContext(request))
+    context = {'available_languages': ['en', 'es', 'fr']}
+    return render(request, 'mytemplate.html', context)
 
 you can iterate over those languages in the template::
 
@@ -870,7 +866,7 @@ There are also simple filters available for convenience:
 
 * ``{{ LANGUAGE_CODE|language_name }}`` ("German")
 * ``{{ LANGUAGE_CODE|language_name_local }}`` ("Deutsch")
-* ``{{ LANGUAGE_CODE|bidi }}`` (False)
+* ``{{ LANGUAGE_CODE|language_bidi }}`` (False)
 
 .. _Django templates: ../templates_python/
 
@@ -1040,7 +1036,7 @@ Client-side caching will save bandwidth and make your site load faster. If
 you're using ETags (:setting:`USE_ETAGS = True <USE_ETAGS>`), you're already
 covered. Otherwise, you can apply :ref:`conditional decorators
 <conditional-decorators>`. In the following example, the cache is invalidated
-whenever your restart your application server.
+whenever you restart your application server.
 
 .. code-block:: python
 
@@ -1049,6 +1045,7 @@ whenever your restart your application server.
     from django.views.i18n import javascript_catalog
 
     last_modified_date = timezone.now()
+
     @last_modified(lambda req, **kw: last_modified_date)
     def cached_javascript_catalog(request, domain='djangojs', packages=None):
         return javascript_catalog(request, domain, packages)
@@ -1100,21 +1097,24 @@ prepend the current active language code to all url patterns defined within
     from django.conf.urls import include, url
     from django.conf.urls.i18n import i18n_patterns
 
+    from about import views as about_views
+    from news import views as news_views
+    from sitemap.views import sitemap
+
     urlpatterns = [
-        url(r'^sitemap\.xml$', 'sitemap.view', name='sitemap_xml'),
+        url(r'^sitemap\.xml$', sitemap, name='sitemap_xml'),
     ]
 
     news_patterns = [
-        url(r'^$', 'news.views.index', name='index'),
-        url(r'^category/(?P<slug>[\w-]+)/$', 'news.views.category', name='category'),
-        url(r'^(?P<slug>[\w-]+)/$', 'news.views.details', name='detail'),
+        url(r'^$', news_views.index, name='index'),
+        url(r'^category/(?P<slug>[\w-]+)/$', news_views.category, name='category'),
+        url(r'^(?P<slug>[\w-]+)/$', news_views.details, name='detail'),
     ]
 
     urlpatterns += i18n_patterns(
-        url(r'^about/$', 'about.view', name='about'),
+        url(r'^about/$', about_views.main, name='about'),
         url(r'^news/', include(news_patterns, namespace='news')),
     )
-
 
 After defining these URL patterns, Django will automatically add the
 language prefix to the URL patterns that were added by the ``i18n_patterns``
@@ -1155,21 +1155,24 @@ URL patterns can also be marked translatable using the
     from django.conf.urls.i18n import i18n_patterns
     from django.utils.translation import ugettext_lazy as _
 
+    from about import views as about_views
+    from news import views as news_views
+    from sitemaps.views import sitemap
+
     urlpatterns = [
-        url(r'^sitemap\.xml$', 'sitemap.view', name='sitemap_xml'),
+        url(r'^sitemap\.xml$', sitemap, name='sitemap_xml'),
     ]
 
     news_patterns = [
-        url(r'^$', 'news.views.index', name='index'),
-        url(_(r'^category/(?P<slug>[\w-]+)/$'), 'news.views.category', name='category'),
-        url(r'^(?P<slug>[\w-]+)/$', 'news.views.details', name='detail'),
+        url(r'^$', news_views.index, name='index'),
+        url(_(r'^category/(?P<slug>[\w-]+)/$'), news_views.category, name='category'),
+        url(r'^(?P<slug>[\w-]+)/$', news_views.details, name='detail'),
     ]
 
     urlpatterns += i18n_patterns(
-        url(_(r'^about/$'), 'about.view', name='about'),
+        url(_(r'^about/$'), about_views.main, name='about'),
         url(_(r'^news/'), include(news_patterns, namespace='news')),
     )
-
 
 After you've created the translations, the
 :func:`~django.core.urlresolvers.reverse` function will return the URL in the
@@ -1235,7 +1238,7 @@ file is a plain-text file, representing a single language, that contains all
 available translation strings and how they should be represented in the given
 language. Message files have a ``.po`` file extension.
 
-Django comes with a tool, :djadmin:`django-admin.py makemessages
+Django comes with a tool, :djadmin:`django-admin makemessages
 <makemessages>`, that automates the creation and upkeep of these files.
 
 .. admonition:: Gettext utilities
@@ -1248,12 +1251,11 @@ Django comes with a tool, :djadmin:`django-admin.py makemessages
 
 To create or update a message file, run this command::
 
-    django-admin.py makemessages -l de
+    django-admin makemessages -l de
 
-...where ``de`` is the language code for the message file you want to create.
-The language code, in this case, is in :term:`locale format<locale name>`. For
-example, it's ``pt_BR`` for Brazilian Portuguese and ``de_AT`` for Austrian
-German.
+...where ``de`` is the :term:`locale name` for the message file you want to
+create. For example, ``pt_BR`` for Brazilian Portuguese, ``de_AT`` for Austrian
+German or ``id`` for Indonesian.
 
 The script should be run from one of two places:
 
@@ -1268,28 +1270,25 @@ is configured correctly). It creates (or updates) a message file in the
 directory ``locale/LANG/LC_MESSAGES``. In the ``de`` example, the file will be
 ``locale/de/LC_MESSAGES/django.po``.
 
-.. versionchanged:: 1.7
+When you run ``makemessages`` from the root directory of your project, the
+extracted strings will be automatically distributed to the proper message files.
+That is, a string extracted from a file of an app containing a ``locale``
+directory will go in a message file under that directory. A string extracted
+from a file of an app without any ``locale`` directory will either go in a
+message file under the directory listed first in :setting:`LOCALE_PATHS` or
+will generate an error if :setting:`LOCALE_PATHS` is empty.
 
-    When you run ``makemessages`` from the root directory of your project, the
-    extracted strings will be automatically distributed to the proper message
-    files. That is, a string extracted from a file of an app containing a
-    ``locale`` directory will go in a message file under that directory.
-    A string extracted from a file of an app without any ``locale`` directory
-    will either go in a message file under the directory listed first in
-    :setting:`LOCALE_PATHS` or will generate an error if :setting:`LOCALE_PATHS`
-    is empty.
-
-By default :djadmin:`django-admin.py makemessages <makemessages>` examines every
+By default :djadmin:`django-admin makemessages <makemessages>` examines every
 file that has the ``.html`` or ``.txt`` file extension. In case you want to
 override that default, use the ``--extension`` or ``-e`` option to specify the
 file extensions to examine::
 
-    django-admin.py makemessages -l de -e txt
+    django-admin makemessages -l de -e txt
 
 Separate multiple extensions with commas and/or use ``-e`` or ``--extension``
 multiple times::
 
-    django-admin.py makemessages -l de -e html,txt -e xml
+    django-admin makemessages -l de -e html,txt -e xml
 
 .. warning::
 
@@ -1322,8 +1321,10 @@ For example, if your Django app contained a translation string for the text
 
     _("Welcome to my site.")
 
-...then :djadmin:`django-admin.py makemessages <makemessages>` will have created
-a ``.po`` file containing the following snippet -- a message::
+...then :djadmin:`django-admin makemessages <makemessages>` will have created
+a ``.po`` file containing the following snippet -- a message:
+
+.. code-block:: po
 
     #: path/to/python/module.py:23
     msgid "Welcome to my site."
@@ -1348,39 +1349,38 @@ otherwise, they'll be tacked together without whitespace!
 
 .. admonition:: Mind your charset
 
-    When creating a PO file with your favorite text editor, first edit
-    the charset line (search for ``"CHARSET"``) and set it to the charset
-    you'll be using to edit the content. Due to the way the ``gettext`` tools
-    work internally and because we want to allow non-ASCII source strings in
-    Django's core and your applications, you **must** use UTF-8 as the encoding
-    for your PO file. This means that everybody will be using the same
+    Due to the way the ``gettext`` tools work internally and because we want to
+    allow non-ASCII source strings in Django's core and your applications, you
+    **must** use UTF-8 as the encoding for your PO files (the default when PO
+    files are created).  This means that everybody will be using the same
     encoding, which is important when Django processes the PO files.
 
 To reexamine all source code and templates for new translation strings and
 update all message files for **all** languages, run this::
 
-    django-admin.py makemessages -a
+    django-admin makemessages -a
 
 Compiling message files
 -----------------------
 
 After you create your message file -- and each time you make changes to it --
 you'll need to compile it into a more efficient form, for use by ``gettext``. Do
-this with the :djadmin:`django-admin.py compilemessages <compilemessages>`
+this with the :djadmin:`django-admin compilemessages <compilemessages>`
 utility.
 
 This tool runs over all available ``.po`` files and creates ``.mo`` files, which
 are binary files optimized for use by ``gettext``. In the same directory from
-which you ran :djadmin:`django-admin.py makemessages <makemessages>`, run :djadmin:`django-admin.py compilemessages <compilemessages>` like this::
+which you ran :djadmin:`django-admin makemessages <makemessages>`, run
+:djadmin:`django-admin compilemessages <compilemessages>` like this::
 
-   django-admin.py compilemessages
+   django-admin compilemessages
 
 That's it. Your translations are ready for use.
 
 .. admonition:: Working on Windows?
 
    If you're using Windows and need to install the GNU gettext utilities so
-   :djadmin:`django-admin.py compilemessages <compilemessages>` works see
+   :djadmin:`django-admin compilemessages <compilemessages>` works see
    :ref:`gettext_on_windows` for more information.
 
 .. admonition:: .po files: Encoding and BOM usage.
@@ -1395,15 +1395,15 @@ Creating message files from JavaScript source code
 --------------------------------------------------
 
 You create and update the message files the same way as the other Django message
-files -- with the :djadmin:`django-admin.py makemessages <makemessages>` tool.
+files -- with the :djadmin:`django-admin makemessages <makemessages>` tool.
 The only difference is you need to explicitly specify what in gettext parlance
 is known as a domain in this case the ``djangojs`` domain, by providing a ``-d
 djangojs`` parameter, like this::
 
-    django-admin.py makemessages -d djangojs -l de
+    django-admin makemessages -d djangojs -l de
 
 This would create or update the message file for JavaScript for German. After
-updating message files, just run :djadmin:`django-admin.py compilemessages
+updating message files, just run :djadmin:`django-admin compilemessages
 <compilemessages>` the same way as you do with normal Django message files.
 
 .. _gettext_on_windows:
@@ -1417,8 +1417,7 @@ files of this type, but if you want to create your own message files, or want to
 test or compile a changed message file, you will need the ``gettext`` utilities:
 
 * Download the following zip files from the GNOME servers
-  http://ftp.gnome.org/pub/gnome/binaries/win32/dependencies/ or from one
-  of its mirrors_
+  https://download.gnome.org/binaries/win32/dependencies/
 
   * ``gettext-runtime-X.zip``
   * ``gettext-tools-X.zip``
@@ -1435,14 +1434,48 @@ test or compile a changed message file, you will need the ``gettext`` utilities:
   * Add ``;C:\Program Files\gettext-utils\bin`` at the end of the
     ``Variable value`` field.
 
-.. _mirrors: http://ftp.gnome.org/pub/GNOME/MIRRORS
-
 You may also use ``gettext`` binaries you have obtained elsewhere, so long as
 the ``xgettext --version`` command works properly. Do not attempt to use Django
 translation utilities with a ``gettext`` package if the command ``xgettext
 --version`` entered at a Windows command prompt causes a popup window saying
 "xgettext.exe has generated errors and will be closed by Windows".
 
+.. _customizing-makemessages:
+
+Customizing the ``makemessages`` command
+----------------------------------------
+
+.. highlightlang:: python
+
+If you want to pass additional parameters to ``xgettext``, you need to create a
+custom :djadmin:`makemessages` command and override its ``xgettext_options``
+attribute::
+
+    from django.core.management.commands import makemessages
+
+    class Command(makemessages.Command):
+        xgettext_options = makemessages.Command.xgettext_options + ['--keyword=mytrans']
+
+If you need more flexibility, you could also add a new argument to your custom
+:djadmin:`makemessages` command::
+
+    from django.core.management.commands import makemessages
+
+    class Command(makemessages.Command):
+
+        def add_arguments(self, parser):
+            super(Command, self).add_arguments(parser)
+            parser.add_argument('--extra-keyword', dest='xgettext_keywords',
+                                action='append')
+
+        def handle(self, *args, **options):
+            xgettext_keywords = options.pop('xgettext_keywords')
+            if xgettext_keywords:
+                self.xgettext_options = (
+                    makemessages.Command.xgettext_options[:] +
+                    ['--keyword=%s' % kwd for kwd in xgettext_keywords]
+                )
+            super(Command, self).handle(*args, **options)
 
 Miscellaneous
 =============
@@ -1462,14 +1495,9 @@ As a convenience, Django comes with a view, :func:`django.views.i18n.set_languag
 that sets a user's language preference and redirects to a given URL or, by default,
 back to the previous page.
 
-Make sure that the following item is in your
-:setting:`TEMPLATE_CONTEXT_PROCESSORS` list in your settings file::
-
-    'django.core.context_processors.i18n'
-
 Activate this view by adding the following line to your URLconf::
 
-    (r'^i18n/', include('django.conf.urls.i18n')),
+    url(r'^i18n/', include('django.conf.urls.i18n')),
 
 (Note that this example makes the view available at ``/i18n/setlang/``.)
 
@@ -1498,10 +1526,13 @@ Here's example HTML template code:
 
 .. code-block:: html+django
 
+    {% load i18n %}
     <form action="{% url 'set_language' %}" method="post">
     {% csrf_token %}
     <input name="next" type="hidden" value="{{ redirect_to }}" />
     <select name="language">
+    {% get_current_language as LANGUAGE_CODE %}
+    {% get_available_languages as LANGUAGES %}
     {% get_language_info_list for LANGUAGES as languages %}
     {% for language in languages %}
     <option value="{{ language.code }}"{% if language.code == LANGUAGE_CODE %} selected="selected"{% endif %}>
@@ -1586,13 +1617,9 @@ Language cookie
 A number of settings can be used to adjust language cookie options:
 
 * :setting:`LANGUAGE_COOKIE_NAME`
-
-.. versionadded:: 1.7
-
 * :setting:`LANGUAGE_COOKIE_AGE`
 * :setting:`LANGUAGE_COOKIE_DOMAIN`
 * :setting:`LANGUAGE_COOKIE_PATH`
-
 
 Implementation notes
 ====================
@@ -1638,7 +1665,7 @@ is set :setting:`LANGUAGE_CODE` and make sure the corresponding :term:`message
 files <message file>` and their compiled versions (``.mo``) exist.
 
 If you want to let each individual user specify which language they
-prefer, then you also need to use use the ``LocaleMiddleware``.
+prefer, then you also need to use the ``LocaleMiddleware``.
 ``LocaleMiddleware`` enables language selection based on data from the request.
 It customizes content for each user.
 
@@ -1655,11 +1682,11 @@ matters, you should follow these guidelines:
 
 For example, your :setting:`MIDDLEWARE_CLASSES` might look like this::
 
-    MIDDLEWARE_CLASSES = (
+    MIDDLEWARE_CLASSES = [
        'django.contrib.sessions.middleware.SessionMiddleware',
        'django.middleware.locale.LocaleMiddleware',
        'django.middleware.common.CommonMiddleware',
-    )
+    ]
 
 (For more on middleware, see the :doc:`middleware documentation
 </topics/http/middleware>`.)
@@ -1674,11 +1701,6 @@ following this algorithm:
 
 * Failing that, it looks for the :data:`~django.utils.translation.LANGUAGE_SESSION_KEY`
   key in the current user's session.
-
-  .. versionchanged:: 1.7
-
-      In previous versions, the key was named ``django_language``, and the
-      ``LANGUAGE_SESSION_KEY`` constant did not exist.
 
 * Failing that, it looks for a cookie.
 
@@ -1710,10 +1732,10 @@ Notes:
   languages (because your application doesn't provide all those languages),
   set :setting:`LANGUAGES` to a list of languages. For example::
 
-      LANGUAGES = (
+      LANGUAGES = [
         ('de', _('German')),
         ('en', _('English')),
-      )
+      ]
 
   This example restricts languages that are available for automatic
   selection to German and English (and any sublanguage, like de-ch or
@@ -1728,10 +1750,10 @@ Notes:
 
       from django.utils.translation import ugettext_lazy as _
 
-      LANGUAGES = (
+      LANGUAGES = [
           ('de', _('German')),
           ('en', _('English')),
-      )
+      ]
 
 Once ``LocaleMiddleware`` determines the user's preference, it makes this
 preference available as ``request.LANGUAGE_CODE`` for each
@@ -1798,10 +1820,10 @@ All message file repositories are structured the same way. They are:
 * ``$APPPATH/locale/<language>/LC_MESSAGES/django.(po|mo)``
 * ``$PYTHONPATH/django/conf/locale/<language>/LC_MESSAGES/django.(po|mo)``
 
-To create message files, you use the :djadmin:`django-admin.py makemessages <makemessages>`
-tool. And you use :djadmin:`django-admin.py compilemessages <compilemessages>`
+To create message files, you use the :djadmin:`django-admin makemessages <makemessages>`
+tool. And you use :djadmin:`django-admin compilemessages <compilemessages>`
 to produce the binary ``.mo`` files that are used by ``gettext``.
 
-You can also run :djadmin:`django-admin.py compilemessages
+You can also run :djadmin:`django-admin compilemessages
 --settings=path.to.settings <compilemessages>` to make the compiler process all
 the directories in your :setting:`LOCALE_PATHS` setting.

@@ -1,12 +1,12 @@
 from django.contrib.contenttypes.fields import (
-    GenericForeignKey, GenericRelation
+    GenericForeignKey, GenericRelation,
 )
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from django.utils.encoding import python_2_unicode_compatible
 
 
-## Basic tests
+# Basic tests
 
 @python_2_unicode_compatible
 class Author(models.Model):
@@ -66,6 +66,11 @@ class BookWithYear(Book):
         AuthorWithAge, related_name='books_with_year')
 
 
+class Bio(models.Model):
+    author = models.OneToOneField(Author)
+    books = models.ManyToManyField(Book, blank=True)
+
+
 @python_2_unicode_compatible
 class Reader(models.Model):
     name = models.CharField(max_length=50)
@@ -83,7 +88,7 @@ class BookReview(models.Model):
     notes = models.TextField(null=True, blank=True)
 
 
-## Models for default manager tests
+# Models for default manager tests
 
 class Qualification(models.Model):
     name = models.CharField(max_length=10)
@@ -119,7 +124,7 @@ class Department(models.Model):
         ordering = ['id']
 
 
-## GenericRelation/GenericForeignKey tests
+# GenericRelation/GenericForeignKey tests
 
 @python_2_unicode_compatible
 class TaggedItem(models.Model):
@@ -167,7 +172,7 @@ class Comment(models.Model):
         ordering = ['id']
 
 
-## Models for lookup ordering tests
+# Models for lookup ordering tests
 
 class House(models.Model):
     name = models.CharField(max_length=50)
@@ -196,11 +201,15 @@ class Person(models.Model):
         # Assume business logic forces every person to have at least one house.
         return sorted(self.houses.all(), key=lambda house: -house.rooms.count())[0]
 
+    @property
+    def all_houses(self):
+        return list(self.houses.all())
+
     class Meta:
         ordering = ['id']
 
 
-## Models for nullable FK tests
+# Models for nullable FK tests
 
 @python_2_unicode_compatible
 class Employee(models.Model):
@@ -215,7 +224,7 @@ class Employee(models.Model):
         ordering = ['id']
 
 
-## Ticket #19607
+# Ticket #19607
 
 @python_2_unicode_compatible
 class LessonEntry(models.Model):
@@ -235,7 +244,7 @@ class WordEntry(models.Model):
         return "%s (%s)" % (self.name, self.id)
 
 
-## Ticket #21410: Regression when related_name="+"
+# Ticket #21410: Regression when related_name="+"
 
 @python_2_unicode_compatible
 class Author2(models.Model):

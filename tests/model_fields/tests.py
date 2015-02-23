@@ -1,31 +1,33 @@
 from __future__ import unicode_literals
 
 import datetime
-from decimal import Decimal
 import unittest
-import warnings
+from decimal import Decimal
 
-from django import test
-from django import forms
-from django.core import validators
+from django import forms, test
+from django.core import checks, validators
 from django.core.exceptions import ValidationError
-from django.db import connection, transaction, models, IntegrityError
+from django.db import IntegrityError, connection, models, transaction
 from django.db.models.fields import (
-    AutoField, BigIntegerField, BinaryField, BooleanField, CharField,
-    CommaSeparatedIntegerField, DateField, DateTimeField, DecimalField,
-    EmailField, FilePathField, FloatField, IntegerField, IPAddressField,
-    GenericIPAddressField, NOT_PROVIDED, NullBooleanField, PositiveIntegerField,
+    NOT_PROVIDED, AutoField, BigIntegerField, BinaryField, BooleanField,
+    CharField, CommaSeparatedIntegerField, DateField, DateTimeField,
+    DecimalField, EmailField, FilePathField, FloatField, GenericIPAddressField,
+    IntegerField, IPAddressField, NullBooleanField, PositiveIntegerField,
     PositiveSmallIntegerField, SlugField, SmallIntegerField, TextField,
-    TimeField, URLField)
+    TimeField, URLField,
+)
 from django.db.models.fields.files import FileField, ImageField
 from django.utils import six
 from django.utils.functional import lazy
 
 from .models import (
-    Foo, Bar, Whiz, BigD, BigS, BigIntegerModel, Post, NullBooleanModel,
-    BooleanModel, PrimaryKeyCharModel, DataModel, Document, RenamedField,
-    DateTimeModel, VerboseNameField, FksToBooleans, FkToChar, FloatModel,
-    SmallIntegerModel, IntegerModel, PositiveSmallIntegerModel, PositiveIntegerModel)
+    AbstractForeignFieldsModel, Bar, BigD, BigIntegerModel, BigS, BooleanModel,
+    DataModel, DateTimeModel, Document, FksToBooleans, FkToChar, FloatModel,
+    Foo, GenericIPAddress, IntegerModel, NullBooleanModel,
+    PositiveIntegerModel, PositiveSmallIntegerModel, Post, PrimaryKeyCharModel,
+    RenamedField, SmallIntegerModel, VerboseNameField, Whiz, WhizIter,
+    WhizIterEmpty,
+)
 
 
 class BasicFieldTests(test.TestCase):
@@ -74,7 +76,7 @@ class BasicFieldTests(test.TestCase):
 
     def test_field_verbose_name(self):
         m = VerboseNameField
-        for i in range(1, 23):
+        for i in range(1, 24):
             self.assertEqual(m._meta.get_field('field%d' % i).verbose_name,
                              'verbose field%d' % i)
 
@@ -180,6 +182,59 @@ class ForeignKeyTests(test.TestCase):
         fk_model_empty = FkToChar.objects.select_related('out').get(id=fk_model_empty.pk)
         self.assertEqual(fk_model_empty.out, char_model_empty)
 
+    def test_warning_when_unique_true_on_fk(self):
+        class FKUniqueTrue(models.Model):
+            fk_field = models.ForeignKey(Foo, unique=True)
+
+        model = FKUniqueTrue()
+        expected_warnings = [
+            checks.Warning(
+                'Setting unique=True on a ForeignKey has the same effect as using a OneToOneField.',
+                hint='ForeignKey(unique=True) is usually better served by a OneToOneField.',
+                obj=FKUniqueTrue.fk_field.field,
+                id='fields.W342',
+            )
+        ]
+        warnings = model.check()
+        self.assertEqual(warnings, expected_warnings)
+
+    def test_related_name_converted_to_text(self):
+        rel_name = Bar._meta.get_field('a').rel.related_name
+        self.assertIsInstance(rel_name, six.text_type)
+
+    def test_abstract_model_pending_lookups(self):
+        """
+        Foreign key fields declared on abstract models should not add lazy relations to
+        resolve relationship declared as string. refs #24215
+        """
+        opts = AbstractForeignFieldsModel._meta
+        to_key = ('missing', 'FK')
+        fk_lookup = (AbstractForeignFieldsModel, opts.get_field('fk'))
+        self.assertFalse(
+            any(lookup[0:2] == fk_lookup for lookup in opts.apps._pending_lookups.get(to_key, [])),
+            'Pending lookup added for the abstract model foreign key `to` parameter'
+        )
+
+
+class ManyToManyFieldTests(test.TestCase):
+    def test_abstract_model_pending_lookups(self):
+        """
+        Many-to-many fields declared on abstract models should not add lazy relations to
+        resolve relationship declared as string. refs #24215
+        """
+        opts = AbstractForeignFieldsModel._meta
+        to_key = ('missing', 'M2M')
+        fk_lookup = (AbstractForeignFieldsModel, opts.get_field('m2m'))
+        self.assertFalse(
+            any(lookup[0:2] == fk_lookup for lookup in opts.apps._pending_lookups.get(to_key, [])),
+            'Pending lookup added for the abstract model many-to-many `to` parameter.'
+        )
+        through_key = ('missing', 'Through')
+        self.assertFalse(
+            any(lookup[0:2] == fk_lookup for lookup in opts.apps._pending_lookups.get(through_key, [])),
+            'Pending lookup added for the abstract model many-to-many `through` parameter.'
+        )
+
 
 class DateTimeFieldTests(unittest.TestCase):
     def test_datetimefield_to_python_usecs(self):
@@ -222,8 +277,8 @@ class BooleanFieldTests(unittest.TestCase):
         self.assertEqual(f.get_db_prep_lookup('exact', None, connection=connection), [None])
 
     def _test_to_python(self, f):
-        self.assertTrue(f.to_python(1) is True)
-        self.assertTrue(f.to_python(0) is False)
+        self.assertIs(f.to_python(1), True)
+        self.assertIs(f.to_python(0), False)
 
     def test_booleanfield_get_db_prep_lookup(self):
         self._test_get_db_prep_lookup(models.BooleanField())
@@ -258,9 +313,6 @@ class BooleanFieldTests(unittest.TestCase):
         formfield with the blank option (#9640, #10549).
         """
         choices = [(1, 'Si'), (2, 'No')]
-        f = models.BooleanField(choices=choices, default=1, null=True)
-        self.assertEqual(f.formfield().choices, [('', '---------')] + choices)
-
         f = models.BooleanField(choices=choices, default=1, null=False)
         self.assertEqual(f.formfield().choices, choices)
 
@@ -315,7 +367,7 @@ class BooleanFieldTests(unittest.TestCase):
 
         # Test select_related('fk_field_name')
         ma = FksToBooleans.objects.select_related('bf').get(pk=m1.id)
-        # verify types -- should't be 0/1
+        # verify types -- shouldn't be 0/1
         self.assertIsInstance(ma.bf.bfield, bool)
         self.assertIsInstance(ma.nbf.nbfield, bool)
         # verify values
@@ -375,6 +427,31 @@ class ChoicesTests(test.TestCase):
         self.assertEqual(Whiz(c=None).get_c_display(), None)    # Blank value
         self.assertEqual(Whiz(c='').get_c_display(), '')        # Empty value
 
+    def test_iterator_choices(self):
+        """
+        Check that get_choices works with Iterators (#23112).
+        """
+        self.assertEqual(WhizIter(c=1).c, 1)          # A nested value
+        self.assertEqual(WhizIter(c=9).c, 9)          # Invalid value
+        self.assertEqual(WhizIter(c=None).c, None)    # Blank value
+        self.assertEqual(WhizIter(c='').c, '')        # Empty value
+
+    def test_empty_iterator_choices(self):
+        """
+        Check that get_choices works with empty iterators (#23112).
+        """
+        self.assertEqual(WhizIterEmpty(c="a").c, "a")      # A nested value
+        self.assertEqual(WhizIterEmpty(c="b").c, "b")      # Invalid value
+        self.assertEqual(WhizIterEmpty(c=None).c, None)    # Blank value
+        self.assertEqual(WhizIterEmpty(c='').c, '')        # Empty value
+
+    def test_charfield_get_choices_with_blank_iterator(self):
+        """
+        Check that get_choices works with an empty Iterator
+        """
+        f = models.CharField(choices=(x for x in []))
+        self.assertEqual(f.get_choices(include_blank=True), [('', '---------')])
+
 
 class SlugFieldTests(test.TestCase):
     def test_slugfield_max_length(self):
@@ -415,6 +492,13 @@ class ValidationTest(test.TestCase):
     def test_charfield_get_choices_with_blank_defined(self):
         f = models.CharField(choices=[('', '<><>'), ('a', 'A')])
         self.assertEqual(f.get_choices(True), [('', '<><>'), ('a', 'A')])
+
+    def test_charfield_get_choices_doesnt_evaluate_lazy_strings(self):
+        # Regression test for #23098
+        # Will raise ZeroDivisionError if lazy is evaluated
+        lazy_func = lazy(lambda x: 0 / 0, int)
+        f = models.CharField(choices=[(lazy_func('group'), (('a', 'A'), ('b', 'B')))])
+        self.assertEqual(f.get_choices(True)[0], ('', '---------'))
 
     def test_choices_validation_supports_named_groups(self):
         f = models.IntegerField(
@@ -619,10 +703,6 @@ class BinaryFieldTests(test.TestCase):
             # Test default value
             self.assertEqual(bytes(dm.short_data), b'\x08')
 
-    if connection.vendor == 'mysql' and six.PY3:
-        # Existing MySQL DB-API drivers fail on binary data.
-        test_set_and_retrieve = unittest.expectedFailure(test_set_and_retrieve)
-
     def test_max_length(self):
         dm = DataModel(short_data=self.binary_data * 4)
         self.assertRaises(ValidationError, dm.full_clean)
@@ -640,6 +720,19 @@ class GenericIPAddressFieldTests(test.TestCase):
         model_field = models.GenericIPAddressField(protocol='IPv6')
         form_field = model_field.formfield()
         self.assertRaises(ValidationError, form_field.clean, '127.0.0.1')
+
+    def test_null_value(self):
+        """
+        Null values should be resolved to None in Python (#24078).
+        """
+        GenericIPAddress.objects.create()
+        o = GenericIPAddress.objects.get()
+        self.assertIsNone(o.ip)
+
+    def test_save_load(self):
+        instance = GenericIPAddress.objects.create(ip='::1')
+        loaded = GenericIPAddress.objects.get()
+        self.assertEqual(loaded.ip, instance.ip)
 
 
 class PromiseTest(test.TestCase):
@@ -673,9 +766,17 @@ class PromiseTest(test.TestCase):
         self.assertIsInstance(
             CharField().get_prep_value(lazy_func()),
             six.text_type)
+        lazy_func = lazy(lambda: 0, int)
+        self.assertIsInstance(
+            CharField().get_prep_value(lazy_func()),
+            six.text_type)
 
     def test_CommaSeparatedIntegerField(self):
         lazy_func = lazy(lambda: '1,2', six.text_type)
+        self.assertIsInstance(
+            CommaSeparatedIntegerField().get_prep_value(lazy_func()),
+            six.text_type)
+        lazy_func = lazy(lambda: 0, int)
         self.assertIsInstance(
             CommaSeparatedIntegerField().get_prep_value(lazy_func()),
             six.text_type)
@@ -709,9 +810,17 @@ class PromiseTest(test.TestCase):
         self.assertIsInstance(
             FileField().get_prep_value(lazy_func()),
             six.text_type)
+        lazy_func = lazy(lambda: 0, int)
+        self.assertIsInstance(
+            FileField().get_prep_value(lazy_func()),
+            six.text_type)
 
     def test_FilePathField(self):
         lazy_func = lazy(lambda: 'tests.py', six.text_type)
+        self.assertIsInstance(
+            FilePathField().get_prep_value(lazy_func()),
+            six.text_type)
+        lazy_func = lazy(lambda: 0, int)
         self.assertIsInstance(
             FilePathField().get_prep_value(lazy_func()),
             six.text_type)
@@ -736,14 +845,20 @@ class PromiseTest(test.TestCase):
 
     def test_IPAddressField(self):
         lazy_func = lazy(lambda: '127.0.0.1', six.text_type)
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            self.assertIsInstance(
-                IPAddressField().get_prep_value(lazy_func()),
-                six.text_type)
+        self.assertIsInstance(
+            IPAddressField().get_prep_value(lazy_func()),
+            six.text_type)
+        lazy_func = lazy(lambda: 0, int)
+        self.assertIsInstance(
+            IPAddressField().get_prep_value(lazy_func()),
+            six.text_type)
 
     def test_GenericIPAddressField(self):
         lazy_func = lazy(lambda: '127.0.0.1', six.text_type)
+        self.assertIsInstance(
+            GenericIPAddressField().get_prep_value(lazy_func()),
+            six.text_type)
+        lazy_func = lazy(lambda: 0, int)
         self.assertIsInstance(
             GenericIPAddressField().get_prep_value(lazy_func()),
             six.text_type)
@@ -771,6 +886,10 @@ class PromiseTest(test.TestCase):
         self.assertIsInstance(
             SlugField().get_prep_value(lazy_func()),
             six.text_type)
+        lazy_func = lazy(lambda: 0, int)
+        self.assertIsInstance(
+            SlugField().get_prep_value(lazy_func()),
+            six.text_type)
 
     def test_SmallIntegerField(self):
         lazy_func = lazy(lambda: 1, int)
@@ -780,6 +899,10 @@ class PromiseTest(test.TestCase):
 
     def test_TextField(self):
         lazy_func = lazy(lambda: 'Abc', six.text_type)
+        self.assertIsInstance(
+            TextField().get_prep_value(lazy_func()),
+            six.text_type)
+        lazy_func = lazy(lambda: 0, int)
         self.assertIsInstance(
             TextField().get_prep_value(lazy_func()),
             six.text_type)

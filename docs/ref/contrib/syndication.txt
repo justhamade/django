@@ -118,7 +118,7 @@ into those elements.
   both.
 
   If you want to do any special formatting for either the title or
-  description, :doc:`Django templates </topics/templates>` can be used
+  description, :doc:`Django templates </ref/templates/language>` can be used
   instead. Their paths can be specified with the ``title_template`` and
   ``description_template`` attributes on the
   :class:`~django.contrib.syndication.views.Feed` class. The templates are
@@ -217,7 +217,7 @@ The police beat feeds could be accessible via URLs like this:
 
 These can be matched with a :doc:`URLconf </topics/http/urls>` line such as::
 
-    (r'^beats/(?P<beat_id>\d+)/rss/$', BeatFeed()),
+    url(r'^beats/(?P<beat_id>[0-9]+)/rss/$', BeatFeed()),
 
 Like a view, the arguments in the URL are passed to the ``get_object()``
 method along with the request object.
@@ -953,10 +953,6 @@ They share this interface:
     * ``enclosure`` should be an instance of
       :class:`django.utils.feedgenerator.Enclosure`.
     * ``categories`` should be a sequence of Unicode objects.
-
-    .. versionadded:: 1.7
-
-        The optional ``updateddate`` argument was added.
 
 :meth:`.SyndicationFeed.write`
     Outputs the feed in the given encoding to outfile, which is a file-like object.

@@ -1,5 +1,5 @@
 from django.contrib.contenttypes.fields import (
-    GenericForeignKey, GenericRelation
+    GenericForeignKey, GenericRelation,
 )
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
@@ -26,26 +26,6 @@ class Media(models.Model):
 
     def __str__(self):
         return self.url
-
-#
-# These models let us test the different GenericInline settings at
-# different urls in the admin site.
-#
-
-#
-# Generic inline with extra = 0
-#
-
-
-class EpisodeExtra(Episode):
-    pass
-
-
-#
-# Generic inline with extra and max_num
-#
-class EpisodeMaxNum(Episode):
-    pass
 
 
 #

@@ -1,22 +1,25 @@
 from __future__ import unicode_literals
-from collections import OrderedDict
+
 import hashlib
+import json
 import os
 import posixpath
 import re
-import json
+from collections import OrderedDict
 
 from django.conf import settings
-from django.core.cache import (caches, InvalidCacheBackendError,
-                               cache as default_cache)
+from django.contrib.staticfiles.utils import check_settings, matches_patterns
+from django.core.cache import (
+    InvalidCacheBackendError, cache as default_cache, caches,
+)
 from django.core.exceptions import ImproperlyConfigured
 from django.core.files.base import ContentFile
 from django.core.files.storage import FileSystemStorage, get_storage_class
 from django.utils.encoding import force_bytes, force_text
 from django.utils.functional import LazyObject
-from django.utils.six.moves.urllib.parse import unquote, urlsplit, urlunsplit, urldefrag
-
-from django.contrib.staticfiles.utils import check_settings, matches_patterns
+from django.utils.six.moves.urllib.parse import (
+    unquote, urldefrag, urlsplit, urlunsplit,
+)
 
 
 class StaticFilesStorage(FileSystemStorage):
@@ -72,7 +75,7 @@ class HashedFilesMixin(object):
 
     def file_hash(self, name, content=None):
         """
-        Retuns a hash of the file with the given name and optional content.
+        Returns a hash of the file with the given name and optional content.
         """
         if content is None:
             return None
@@ -312,10 +315,14 @@ class ManifestFilesMixin(HashedFilesMixin):
                          (self.manifest_name, self.manifest_version))
 
     def post_process(self, *args, **kwargs):
+        self.hashed_files = OrderedDict()
         all_post_processed = super(ManifestFilesMixin,
                                    self).post_process(*args, **kwargs)
         for post_processed in all_post_processed:
             yield post_processed
+        self.save_manifest()
+
+    def save_manifest(self):
         payload = {'paths': self.hashed_files, 'version': self.manifest_version}
         if self.exists(self.manifest_name):
             self.delete(self.manifest_name)

@@ -1,16 +1,17 @@
 from __future__ import unicode_literals
 
 import sys
-try:
-    import threading
-except ImportError:
-    threading = None
+import threading
 import time
 from unittest import skipIf, skipUnless
 
-from django.db import (connection, transaction,
-    DatabaseError, Error, IntegrityError, OperationalError)
-from django.test import TransactionTestCase, skipIfDBFeature, skipUnlessDBFeature
+from django.db import (
+    DatabaseError, Error, IntegrityError, OperationalError, connection,
+    transaction,
+)
+from django.test import (
+    TransactionTestCase, skipIfDBFeature, skipUnlessDBFeature,
+)
 from django.utils import six
 
 from .models import Reporter
@@ -403,3 +404,25 @@ class AtomicMiscTests(TransactionTestCase):
                 pass
         # Must not raise an exception
         transaction.atomic(Callable())
+
+    @skipUnlessDBFeature('can_release_savepoints')
+    def test_atomic_does_not_leak_savepoints_on_failure(self):
+        # Regression test for #23074
+
+        # Expect an error when rolling back a savepoint that doesn't exist.
+        # Done outside of the transaction block to ensure proper recovery.
+        with self.assertRaises(Error):
+
+            # Start a plain transaction.
+            with transaction.atomic():
+
+                # Swallow the intentional error raised in the sub-transaction.
+                with six.assertRaisesRegex(self, Exception, "Oops"):
+
+                    # Start a sub-transaction with a savepoint.
+                    with transaction.atomic():
+                        sid = connection.savepoint_ids[-1]
+                        raise Exception("Oops")
+
+                # This is expected to fail because the savepoint no longer exists.
+                connection.savepoint_rollback(sid)

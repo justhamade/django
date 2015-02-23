@@ -17,6 +17,9 @@ handler500 = 'django.views.defaults.server_error'
 
 
 def include(arg, namespace=None, app_name=None):
+    if app_name and not namespace:
+        raise ValueError('Must specify a namespace if specifying app_name.')
+
     if isinstance(arg, tuple):
         # callable returning a namespace hint
         if namespace:
@@ -67,6 +70,12 @@ def url(regex, view, kwargs=None, name=None, prefix=''):
         return RegexURLResolver(regex, urlconf_module, kwargs, app_name=app_name, namespace=namespace)
     else:
         if isinstance(view, six.string_types):
+            warnings.warn(
+                'Support for string view arguments to url() is deprecated and '
+                'will be removed in Django 2.0 (got %s). Pass the callable '
+                'instead.' % view,
+                RemovedInDjango20Warning, stacklevel=2
+            )
             if not view:
                 raise ImproperlyConfigured('Empty URL pattern view name not permitted (for pattern %r)' % regex)
             if prefix:

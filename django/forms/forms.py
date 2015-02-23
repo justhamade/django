@@ -4,21 +4,21 @@ Form classes
 
 from __future__ import unicode_literals
 
-from collections import OrderedDict
 import copy
-import warnings
+import datetime
+from collections import OrderedDict
 
-from django.core.exceptions import ValidationError, NON_FIELD_ERRORS
+from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
 from django.forms.fields import Field, FileField
-from django.forms.utils import flatatt, ErrorDict, ErrorList
-from django.forms.widgets import Media, MediaDefiningClass, TextInput, Textarea
-from django.utils.deprecation import RemovedInDjango19Warning
-from django.utils.encoding import smart_text, force_text, python_2_unicode_compatible
+from django.forms.utils import ErrorDict, ErrorList, flatatt
+from django.forms.widgets import Media, MediaDefiningClass, Textarea, TextInput
+from django.utils import six
+from django.utils.encoding import (
+    force_text, python_2_unicode_compatible, smart_text,
+)
 from django.utils.html import conditional_escape, format_html
 from django.utils.safestring import mark_safe
 from django.utils.translation import ugettext as _
-from django.utils import six
-
 
 __all__ = ('BaseForm', 'Form')
 
@@ -28,42 +28,6 @@ def pretty_name(name):
     if not name:
         return ''
     return name.replace('_', ' ').capitalize()
-
-
-def get_declared_fields(bases, attrs, with_base_fields=True):
-    """
-    Create a list of form field instances from the passed in 'attrs', plus any
-    similar fields on the base classes (in 'bases'). This is used by both the
-    Form and ModelForm metaclasses.
-
-    If 'with_base_fields' is True, all fields from the bases are used.
-    Otherwise, only fields in the 'declared_fields' attribute on the bases are
-    used. The distinction is useful in ModelForm subclassing.
-    Also integrates any additional media definitions.
-    """
-
-    warnings.warn(
-        "get_declared_fields is deprecated and will be removed in Django 1.9.",
-        RemovedInDjango19Warning,
-        stacklevel=2,
-    )
-
-    fields = [(field_name, attrs.pop(field_name)) for field_name, obj in list(six.iteritems(attrs)) if isinstance(obj, Field)]
-    fields.sort(key=lambda x: x[1].creation_counter)
-
-    # If this class is subclassing another Form, add that Form's fields.
-    # Note that we loop over the bases in *reverse*. This is necessary in
-    # order to preserve the correct order of fields.
-    if with_base_fields:
-        for base in bases[::-1]:
-            if hasattr(base, 'base_fields'):
-                fields = list(six.iteritems(base.base_fields)) + fields
-    else:
-        for base in bases[::-1]:
-            if hasattr(base, 'declared_fields'):
-                fields = list(six.iteritems(base.declared_fields)) + fields
-
-    return OrderedDict(fields)
 
 
 class DeclarativeFieldsMetaclass(MediaDefiningClass):
@@ -91,8 +55,8 @@ class DeclarativeFieldsMetaclass(MediaDefiningClass):
                 declared_fields.update(base.declared_fields)
 
             # Field shadowing.
-            for attr in base.__dict__.keys():
-                if attr in declared_fields:
+            for attr, value in base.__dict__.items():
+                if value is None and attr in declared_fields:
                     declared_fields.pop(attr)
 
         new_class.base_fields = declared_fields
@@ -133,6 +97,18 @@ class BaseForm(object):
     def __str__(self):
         return self.as_table()
 
+    def __repr__(self):
+        if self._errors is None:
+            is_valid = "Unknown"
+        else:
+            is_valid = self.is_bound and not bool(self._errors)
+        return '<%(cls)s bound=%(bound)s, valid=%(valid)s, fields=(%(fields)s)>' % {
+            'cls': self.__class__.__name__,
+            'bound': self.is_bound,
+            'valid': is_valid,
+            'fields': ';'.join(self.fields),
+        }
+
     def __iter__(self):
         for name in self.fields:
             yield self[name]
@@ -142,7 +118,8 @@ class BaseForm(object):
         try:
             field = self.fields[name]
         except KeyError:
-            raise KeyError('Key %r not found in Form' % name)
+            raise KeyError(
+                "Key %r not found in '%s'" % (name, self.__class__.__name__))
         return BoundField(self, field, name)
 
     @property
@@ -234,9 +211,14 @@ class BaseForm(object):
                     # that users write): if there are only top errors, we may
                     # not be able to conscript the last row for our purposes,
                     # so insert a new, empty row.
-                    last_row = (normal_row % {'errors': '', 'label': '',
-                                              'field': '', 'help_text': '',
-                                              'html_class_attr': html_class_attr})
+                    last_row = (normal_row % {
+                        'errors': '',
+                        'label': '',
+                        'field': '',
+                        'help_text': '',
+                        'html_class_attr': html_class_attr,
+                        'field_name': '',
+                    })
                     output.append(last_row)
                 output[-1] = last_row[:-len(row_ender)] + str_hidden + row_ender
             else:
@@ -278,7 +260,7 @@ class BaseForm(object):
         field -- i.e., from Form.clean(). Returns an empty ErrorList if there
         are none.
         """
-        return self.errors.get(NON_FIELD_ERRORS, self.error_class())
+        return self.errors.get(NON_FIELD_ERRORS, self.error_class(error_class='nonfield'))
 
     def _raw_value(self, fieldname):
         """
@@ -329,7 +311,10 @@ class BaseForm(object):
                 if field != NON_FIELD_ERRORS and field not in self.fields:
                     raise ValueError(
                         "'%s' has no field named '%s'." % (self.__class__.__name__, field))
-                self._errors[field] = self.error_class()
+                if field == NON_FIELD_ERRORS:
+                    self._errors[field] = self.error_class(error_class='nonfield')
+                else:
+                    self._errors[field] = self.error_class()
             self._errors[field].extend(error_list)
             if field in self.cleaned_data:
                 del self.cleaned_data[field]
@@ -398,7 +383,7 @@ class BaseForm(object):
 
     def clean(self):
         """
-        Hook for doing any extra form-wide cleaning after Field.clean() been
+        Hook for doing any extra form-wide cleaning after Field.clean() has been
         called on every field. Any ValidationError raised by this method will
         not be associated with a particular field; it will have a special-case
         association with the field named '__all__'.
@@ -415,7 +400,7 @@ class BaseForm(object):
     def changed_data(self):
         if self._changed_data is None:
             self._changed_data = []
-            # XXX: For now we're asking the individual widgets whether or not the
+            # XXX: For now we're asking the individual fields whether or not the
             # data has changed. It would probably be more efficient to hash the
             # initial data, store it in a hidden field, and compare a hash of the
             # submitted data, but we'd need a way to easily get the string value
@@ -438,7 +423,7 @@ class BaseForm(object):
                         # Always assume data has changed if validation fails.
                         self._changed_data.append(name)
                         continue
-                if field._has_changed(initial_value, data_value):
+                if field.has_changed(initial_value, data_value):
                     self._changed_data.append(name)
         return self._changed_data
 
@@ -524,6 +509,10 @@ class BoundField(object):
         return len(list(self.__iter__()))
 
     def __getitem__(self, idx):
+        # Prevent unnecessary reevaluation when accessing BoundField's attrs
+        # from templates.
+        if not isinstance(idx, six.integer_types):
+            raise TypeError
         return list(self.__iter__())[idx]
 
     @property
@@ -558,7 +547,7 @@ class BoundField(object):
             name = self.html_name
         else:
             name = self.html_initial_name
-        return widget.render(name, self.value(), attrs=attrs)
+        return force_text(widget.render(name, self.value(), attrs=attrs))
 
     def as_text(self, attrs=None, **kwargs):
         """
@@ -592,6 +581,11 @@ class BoundField(object):
             data = self.form.initial.get(self.name, self.field.initial)
             if callable(data):
                 data = data()
+                # If this is an auto-generated default date, nix the
+                # microseconds for standardized handling. See #22502.
+                if (isinstance(data, (datetime.datetime, datetime.time)) and
+                        not getattr(self.field.widget, 'supports_microseconds', True)):
+                    data = data.replace(microsecond=0)
         else:
             data = self.field.bound_data(
                 self.data, self.form.initial.get(self.name, self.field.initial)
@@ -609,12 +603,14 @@ class BoundField(object):
         label_suffix allows overriding the form's label_suffix.
         """
         contents = contents or self.label
+        if label_suffix is None:
+            label_suffix = (self.field.label_suffix if self.field.label_suffix is not None
+                            else self.form.label_suffix)
         # Only add the suffix if the label does not end in punctuation.
-        label_suffix = label_suffix if label_suffix is not None else self.form.label_suffix
         # Translators: If found as last label character, these punctuation
         # characters will prevent the default label_suffix to be appended to the label
         if label_suffix and contents and contents[-1] not in _(':?.!'):
-            contents = format_html('{0}{1}', contents, label_suffix)
+            contents = format_html('{}{}', contents, label_suffix)
         widget = self.field.widget
         id_ = widget.attrs.get('id') or self.auto_id
         if id_:
@@ -628,7 +624,7 @@ class BoundField(object):
                 else:
                     attrs['class'] = self.form.required_css_class
             attrs = flatatt(attrs) if attrs else ''
-            contents = format_html('<label{0}>{1}</label>', attrs, contents)
+            contents = format_html('<label{}>{}</label>', attrs, contents)
         else:
             contents = conditional_escape(contents)
         return mark_safe(contents)

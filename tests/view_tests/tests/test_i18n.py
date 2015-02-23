@@ -2,17 +2,18 @@
 import gettext
 import json
 import os
-from os import path
 import unittest
+from os import path
 
 from django.conf import settings
 from django.core.urlresolvers import reverse
 from django.test import (
-    LiveServerTestCase, TestCase, modify_settings, override_settings)
+    LiveServerTestCase, TestCase, modify_settings, override_settings,
+)
 from django.utils import six
 from django.utils._os import upath
 from django.utils.module_loading import import_string
-from django.utils.translation import override, LANGUAGE_SESSION_KEY
+from django.utils.translation import LANGUAGE_SESSION_KEY, override
 
 from ..urls import locale_dir
 
@@ -51,7 +52,7 @@ class I18NTests(TestCase):
         # we force saving language to a cookie rather than a session
         # by excluding session middleware and those which do require it
         test_settings = dict(
-            MIDDLEWARE_CLASSES=('django.middleware.common.CommonMiddleware',),
+            MIDDLEWARE_CLASSES=['django.middleware.common.CommonMiddleware'],
             LANGUAGE_COOKIE_NAME='mylanguage',
             LANGUAGE_COOKIE_AGE=3600 * 7 * 2,
             LANGUAGE_COOKIE_DOMAIN='.example.com',
@@ -115,7 +116,7 @@ class JsI18NTests(TestCase):
             response = self.client.get('/jsi18n/')
             self.assertContains(response, 'il faut le traduire')
 
-    def testI18NLanguageNonEnglishDefault(self):
+    def test_i18n_language_non_english_default(self):
         """
         Check if the Javascript i18n view returns an empty language catalog
         if the default language is non-English, the selected language
@@ -127,7 +128,7 @@ class JsI18NTests(TestCase):
             self.assertNotContains(response, 'Choisir une heure')
 
     @modify_settings(INSTALLED_APPS={'append': 'view_tests.app0'})
-    def test_nonenglish_default_english_userpref(self):
+    def test_non_english_default_english_userpref(self):
         """
         Same as above with the difference that there IS an 'en' translation
         available. The Javascript i18n view must return a NON empty language catalog
@@ -137,7 +138,7 @@ class JsI18NTests(TestCase):
             response = self.client.get('/jsi18n_english_translation/')
             self.assertContains(response, 'this app0 string is to be translated')
 
-    def testI18NLanguageNonEnglishFallback(self):
+    def test_i18n_language_non_english_fallback(self):
         """
         Makes sure that the fallback language is still working properly
         in cases where the selected language cannot be found.
@@ -170,7 +171,7 @@ class JsI18NTestsMultiPackage(TestCase):
     settings.LANGUAGE_CODE and merge JS translation from several packages.
     """
     @modify_settings(INSTALLED_APPS={'append': ['view_tests.app1', 'view_tests.app2']})
-    def testI18NLanguageEnglishDefault(self):
+    def test_i18n_language_english_default(self):
         """
         Check if the JavaScript i18n view returns a complete language catalog
         if the default language is en-us, the selected language has a
@@ -183,7 +184,7 @@ class JsI18NTestsMultiPackage(TestCase):
             self.assertContains(response, 'il faut traduire cette cha\\u00eene de caract\\u00e8res de app1')
 
     @modify_settings(INSTALLED_APPS={'append': ['view_tests.app3', 'view_tests.app4']})
-    def testI18NDifferentNonEnLangs(self):
+    def test_i18n_different_non_english_languages(self):
         """
         Similar to above but with neither default or requested language being
         English.
@@ -192,10 +193,14 @@ class JsI18NTestsMultiPackage(TestCase):
             response = self.client.get('/jsi18n_multi_packages2/')
             self.assertContains(response, 'este texto de app3 debe ser traducido')
 
-    def testI18NWithLocalePaths(self):
-        extended_locale_paths = settings.LOCALE_PATHS + (
-            path.join(path.dirname(
-                path.dirname(path.abspath(upath(__file__)))), 'app3', 'locale'),)
+    def test_i18n_with_locale_paths(self):
+        extended_locale_paths = settings.LOCALE_PATHS + [
+            path.join(
+                path.dirname(path.dirname(path.abspath(upath(__file__)))),
+                'app3',
+                'locale',
+            ),
+        ]
         with self.settings(LANGUAGE_CODE='es-ar', LOCALE_PATHS=extended_locale_paths):
             with override('es-ar'):
                 response = self.client.get('/jsi18n/')
@@ -210,8 +215,11 @@ skip_selenium = not os.environ.get('DJANGO_SELENIUM_TESTS', False)
 @override_settings(ROOT_URLCONF='view_tests.urls')
 class JavascriptI18nTests(LiveServerTestCase):
 
-    # The test cases use translations from these apps.
-    available_apps = ['django.contrib.admin', 'view_tests']
+    # The test cases use fixtures & translations from these apps.
+    available_apps = [
+        'django.contrib.admin', 'django.contrib.auth',
+        'django.contrib.contenttypes', 'view_tests',
+    ]
     webdriver_class = 'selenium.webdriver.firefox.webdriver.WebDriver'
 
     @classmethod
@@ -244,3 +252,11 @@ class JavascriptI18nTests(LiveServerTestCase):
         self.assertEqual(elem.text, "1 Resultat")
         elem = self.selenium.find_element_by_id("npgettext_plur")
         self.assertEqual(elem.text, "455 Resultate")
+
+
+class JavascriptI18nChromeTests(JavascriptI18nTests):
+    webdriver_class = 'selenium.webdriver.chrome.webdriver.WebDriver'
+
+
+class JavascriptI18nIETests(JavascriptI18nTests):
+    webdriver_class = 'selenium.webdriver.ie.webdriver.WebDriver'

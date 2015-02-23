@@ -3,20 +3,20 @@ from __future__ import unicode_literals
 import datetime
 from xml.dom import minidom
 
-try:
-    import pytz
-except ImportError:
-    pytz = None
-
+from django.contrib.sites.models import Site
 from django.contrib.syndication import views
 from django.core.exceptions import ImproperlyConfigured
 from django.test import TestCase, override_settings
 from django.test.utils import requires_tz_support
-from django.utils.feedgenerator import rfc2822_date, rfc3339_date
 from django.utils import timezone
+from django.utils.feedgenerator import rfc2822_date, rfc3339_date
 
 from .models import Entry
 
+try:
+    import pytz
+except ImportError:
+    pytz = None
 
 TZ = timezone.get_default_timezone()
 
@@ -55,6 +55,12 @@ class SyndicationFeedTest(FeedTestCase):
     """
     Tests for the high-level syndication feed framework.
     """
+    @classmethod
+    def setUpClass(cls):
+        super(SyndicationFeedTest, cls).setUpClass()
+        # This cleanup is necessary because contrib.sites cache
+        # makes tests interfere with each other, see #11505
+        Site.objects.clear_cache()
 
     def test_rss2_feed(self):
         """
@@ -87,7 +93,6 @@ class SyndicationFeedTest(FeedTestCase):
             'link': 'http://example.com/blog/',
             'language': 'en',
             'lastBuildDate': last_build_date,
-            #'atom:link': '',
             'ttl': '600',
             'copyright': 'Copyright (c) 2007, Sally Smith',
         })
@@ -317,7 +322,7 @@ class SyndicationFeedTest(FeedTestCase):
         Test that datetimes are correctly converted to the local time zone.
         """
         # Naive date times passed in get converted to the local time zone, so
-        # check the recived zone offset against the local offset.
+        # check the received zone offset against the local offset.
         response = self.client.get('/syndication/naive-dates/')
         doc = minidom.parseString(response.content)
         updated = doc.getElementsByTagName('updated')[0].firstChild.wholeText
@@ -386,7 +391,7 @@ class SyndicationFeedTest(FeedTestCase):
 
     def test_item_link_error(self):
         """
-        Test that a ImproperlyConfigured is raised if no link could be found
+        Test that an ImproperlyConfigured is raised if no link could be found
         for the item(s).
         """
         self.assertRaises(ImproperlyConfigured,
@@ -405,8 +410,8 @@ class SyndicationFeedTest(FeedTestCase):
         items = chan.getElementsByTagName('item')
 
         self.assertChildNodeContent(items[0], {
-            'title': 'Title in your templates: My first entry',
-            'description': 'Description in your templates: My first entry',
+            'title': 'Title in your templates: My first entry\n',
+            'description': 'Description in your templates: My first entry\n',
             'link': 'http://example.com/blog/1/',
         })
 
@@ -422,8 +427,8 @@ class SyndicationFeedTest(FeedTestCase):
         items = chan.getElementsByTagName('item')
 
         self.assertChildNodeContent(items[0], {
-            'title': 'My first entry (foo is bar)',
-            'description': 'My first entry (foo is bar)',
+            'title': 'My first entry (foo is bar)\n',
+            'description': 'My first entry (foo is bar)\n',
         })
 
     def test_add_domain(self):

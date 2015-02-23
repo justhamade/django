@@ -1,10 +1,10 @@
 from django.contrib.contenttypes.fields import (
-    GenericForeignKey, GenericRelation
+    GenericForeignKey, GenericRelation,
 )
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
+from django.db.models.deletion import ProtectedError
 from django.utils.encoding import python_2_unicode_compatible
-
 
 __all__ = ('Link', 'Place', 'Restaurant', 'Person', 'Address',
            'CharLink', 'TextLink', 'OddRelation1', 'OddRelation2',
@@ -192,3 +192,26 @@ class D(models.Model):
 
     class Meta:
         ordering = ('id',)
+
+
+# Ticket #22998
+
+class Node(models.Model):
+    content_type = models.ForeignKey(ContentType)
+    object_id = models.PositiveIntegerField()
+    content = GenericForeignKey('content_type', 'object_id')
+
+
+class Content(models.Model):
+    nodes = GenericRelation(Node)
+    related_obj = models.ForeignKey('Related', on_delete=models.CASCADE)
+
+
+class Related(models.Model):
+    pass
+
+
+def prevent_deletes(sender, instance, **kwargs):
+    raise ProtectedError("Not allowed to delete.", [instance])
+
+models.signals.pre_delete.connect(prevent_deletes, sender=Node)

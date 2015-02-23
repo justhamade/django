@@ -3,13 +3,15 @@ from __future__ import unicode_literals
 import os
 
 from django.core.exceptions import ImproperlyConfigured
-from django.core.urlresolvers import reverse, clear_url_caches
+from django.core.urlresolvers import (
+    clear_url_caches, reverse, set_script_prefix,
+)
 from django.http import HttpResponsePermanentRedirect
 from django.middleware.locale import LocaleMiddleware
+from django.template import Context, Template
 from django.test import TestCase, override_settings
-from django.template import Template, Context
-from django.utils._os import upath
 from django.utils import translation
+from django.utils._os import upath
 
 
 class PermanentRedirectLocaleMiddleWare(LocaleMiddleware):
@@ -18,23 +20,29 @@ class PermanentRedirectLocaleMiddleWare(LocaleMiddleware):
 
 @override_settings(
     USE_I18N=True,
-    LOCALE_PATHS=(
+    LOCALE_PATHS=[
         os.path.join(os.path.dirname(upath(__file__)), 'locale'),
-    ),
-    TEMPLATE_DIRS=(
-        os.path.join(os.path.dirname(upath(__file__)), 'templates'),
-    ),
+    ],
     LANGUAGE_CODE='en-us',
-    LANGUAGES=(
+    LANGUAGES=[
         ('nl', 'Dutch'),
         ('en', 'English'),
         ('pt-br', 'Brazilian Portuguese'),
-    ),
-    MIDDLEWARE_CLASSES=(
+    ],
+    MIDDLEWARE_CLASSES=[
         'django.middleware.locale.LocaleMiddleware',
         'django.middleware.common.CommonMiddleware',
-    ),
+    ],
     ROOT_URLCONF='i18n.patterns.urls.default',
+    TEMPLATES=[{
+        'BACKEND': 'django.template.backends.django.DjangoTemplates',
+        'DIRS': [os.path.join(os.path.dirname(upath(__file__)), 'templates')],
+        'OPTIONS': {
+            'context_processors': [
+                'django.template.context_processors.i18n',
+            ],
+        },
+    }],
 )
 class URLTestCaseBase(TestCase):
     """
@@ -187,10 +195,10 @@ class URLRedirectTests(URLTestCaseBase):
         self.assertEqual(response.status_code, 200)
 
     @override_settings(
-        MIDDLEWARE_CLASSES=(
+        MIDDLEWARE_CLASSES=[
             'i18n.patterns.tests.PermanentRedirectLocaleMiddleWare',
             'django.middleware.common.CommonMiddleware',
-        ),
+        ],
     )
     def test_custom_redirect_class(self):
         response = self.client.get('/account/register/', HTTP_ACCEPT_LANGUAGE='en')
@@ -288,6 +296,25 @@ class URLResponseTests(URLTestCaseBase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response['content-language'], 'pt-br')
         self.assertEqual(response.context['LANGUAGE_CODE'], 'pt-br')
+
+
+class URLRedirectWithScriptAliasTests(URLTestCaseBase):
+    """
+    #21579 - LocaleMiddleware should respect the script prefix.
+    """
+    def setUp(self):
+        super(URLRedirectWithScriptAliasTests, self).setUp()
+        self.script_prefix = '/script_prefix'
+        set_script_prefix(self.script_prefix)
+
+    def tearDown(self):
+        super(URLRedirectWithScriptAliasTests, self).tearDown()
+        # reset script prefix
+        set_script_prefix('')
+
+    def test_language_prefix_with_script_prefix(self):
+        response = self.client.get('/prefixed/', HTTP_ACCEPT_LANGUAGE='en', SCRIPT_NAME=self.script_prefix)
+        self.assertRedirects(response, '%s/en/prefixed/' % self.script_prefix, target_status_code=404)
 
 
 class URLTagTests(URLTestCaseBase):

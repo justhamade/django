@@ -1,22 +1,22 @@
-from __future__ import absolute_import, unicode_literals
+from __future__ import unicode_literals
 
 import os
 import sys
+import warnings
 from unittest import skipUnless
 
-from django.apps import apps, AppConfig
+from django.apps import AppConfig, apps
 from django.apps.registry import Apps
 from django.contrib.admin.models import LogEntry
-from django.core.exceptions import ImproperlyConfigured
+from django.core.exceptions import AppRegistryNotReady, ImproperlyConfigured
 from django.db import models
 from django.test import TestCase, override_settings
 from django.test.utils import extend_sys_path
-from django.utils._os import upath
 from django.utils import six
+from django.utils._os import upath
 
 from .default_config_app.apps import CustomConfig
-from .models import TotallyNormal, SoAlternative, new_apps
-
+from .models import SoAlternative, TotallyNormal, new_apps
 
 # Small list with a variety of cases for tests that iterate on installed apps.
 # Intentionally not in alphabetical order to check if the order is preserved.
@@ -35,7 +35,7 @@ SOME_INSTALLED_APPS_NAMES = [
     'django.contrib.auth',
 ] + SOME_INSTALLED_APPS[2:]
 
-HERE = os.path.dirname(__file__)
+HERE = os.path.dirname(upath(__file__))
 
 
 class AppsTests(TestCase):
@@ -166,6 +166,14 @@ class AppsTests(TestCase):
             with self.settings(INSTALLED_APPS=['apps.apps.RelabeledAppsConfig', 'apps']):
                 pass
 
+    def test_import_exception_is_not_masked(self):
+        """
+        App discovery should preserve stack traces. Regression test for #22920.
+        """
+        with six.assertRaisesRegex(self, ImportError, "Oops"):
+            with self.settings(INSTALLED_APPS=['import_error_package']):
+                pass
+
     def test_models_py(self):
         """
         Tests that the models in the models.py file were loaded correctly.
@@ -199,6 +207,57 @@ class AppsTests(TestCase):
         with self.assertRaises(LookupError):
             apps.get_model("apps", "SouthPonies")
         self.assertEqual(new_apps.get_model("apps", "SouthPonies"), temp_model)
+
+    def test_model_clash(self):
+        """
+        Test for behavior when two models clash in the app registry.
+        """
+        new_apps = Apps(["apps"])
+        meta_contents = {
+            'app_label': "apps",
+            'apps': new_apps,
+        }
+
+        body = {}
+        body['Meta'] = type(str("Meta"), tuple(), meta_contents)
+        body['__module__'] = TotallyNormal.__module__
+        type(str("SouthPonies"), (models.Model,), body)
+
+        # When __name__ and __module__ match we assume the module
+        # was reloaded and issue a warning. This use-case is
+        # useful for REPL. Refs #23621.
+        body = {}
+        body['Meta'] = type(str("Meta"), tuple(), meta_contents)
+        body['__module__'] = TotallyNormal.__module__
+        with warnings.catch_warnings(record=True) as w:
+            type(str("SouthPonies"), (models.Model,), body)
+            self.assertEqual(len(w), 1)
+            self.assertTrue(issubclass(w[-1].category, RuntimeWarning))
+            self.assertEqual(str(w[-1].message),
+                 "Model 'southponies.apps' was already registered. "
+                 "Reloading models is not advised as it can lead to inconsistencies, "
+                 "most notably with related models.")
+
+        # If it doesn't appear to be a reloaded module then we expect
+        # a RuntimeError.
+        body = {}
+        body['Meta'] = type(str("Meta"), tuple(), meta_contents)
+        body['__module__'] = TotallyNormal.__module__ + '.whatever'
+        with six.assertRaisesRegex(self, RuntimeError,
+                "Conflicting 'southponies' models in application 'apps':.*"):
+            type(str("SouthPonies"), (models.Model,), body)
+
+    def test_get_containing_app_config_apps_not_ready(self):
+        """
+        apps.get_containing_app_config() should raise an exception if
+        apps.apps_ready isn't True.
+        """
+        apps.apps_ready = False
+        try:
+            with self.assertRaisesMessage(AppRegistryNotReady, "Apps aren't loaded yet"):
+                apps.get_containing_app_config('foo')
+        finally:
+            apps.apps_ready = True
 
 
 class Stub(object):

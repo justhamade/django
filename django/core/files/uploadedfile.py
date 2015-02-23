@@ -7,8 +7,8 @@ import os
 from io import BytesIO
 
 from django.conf import settings
-from django.core.files.base import File
 from django.core.files import temp as tempfile
+from django.core.files.base import File
 from django.utils.encoding import force_str
 
 __all__ = ('UploadedFile', 'TemporaryUploadedFile', 'InMemoryUploadedFile',
@@ -95,9 +95,6 @@ class InMemoryUploadedFile(UploadedFile):
 
     def open(self, mode=None):
         self.file.seek(0)
-
-    def close(self):
-        pass
 
     def chunks(self, chunk_size=None):
         self.file.seek(0)

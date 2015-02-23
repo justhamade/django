@@ -65,6 +65,11 @@ View
 
             response = MyView.as_view()(request)
 
+        .. versionadded:: 1.9
+
+        The returned view has ``view_class`` and ``view_initkwargs``
+        attributes.
+
     .. method:: dispatch(request, *args, **kwargs)
 
         The ``view`` part of the view -- the method that accepts a ``request``
@@ -186,7 +191,7 @@ RedirectView
             pattern_name = 'article-detail'
 
             def get_redirect_url(self, *args, **kwargs):
-                article = get_object_or_404(Article, pk=pk)
+                article = get_object_or_404(Article, pk=kwargs['pk'])
                 article.update_counter()
                 return super(ArticleCounterRedirectView, self).get_redirect_url(*args, **kwargs)
 
@@ -198,8 +203,8 @@ RedirectView
         from article.views import ArticleCounterRedirectView, ArticleDetail
 
         urlpatterns = [
-            url(r'^counter/(?P<pk>\d+)/$', ArticleCounterRedirectView.as_view(), name='article-counter'),
-            url(r'^details/(?P<pk>\d+)/$', ArticleDetail.as_view(), name='article-detail'),
+            url(r'^counter/(?P<pk>[0-9]+)/$', ArticleCounterRedirectView.as_view(), name='article-counter'),
+            url(r'^details/(?P<pk>[0-9]+)/$', ArticleDetail.as_view(), name='article-detail'),
             url(r'^go-to-django/$', RedirectView.as_view(url='http://djangoproject.com'), name='go-to-django'),
         ]
 
@@ -220,7 +225,12 @@ RedirectView
         Whether the redirect should be permanent. The only difference here is
         the HTTP status code returned. If ``True``, then the redirect will use
         status code 301. If ``False``, then the redirect will use status code
-        302. By default, ``permanent`` is ``True``.
+        302. By default, ``permanent`` is ``False``.
+
+        .. versionchanged:: 1.9
+
+            The default value of the ``permanent`` attribute changed from
+            ``True`` to ``False``.
 
     .. attribute:: query_string
 

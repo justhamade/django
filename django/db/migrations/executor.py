@@ -1,6 +1,11 @@
+from __future__ import unicode_literals
+
+from django.apps.registry import apps as global_apps
 from django.db import migrations
+
 from .loader import MigrationLoader
 from .recorder import MigrationRecorder
+from .state import ProjectState
 
 
 class MigrationExecutor(object):
@@ -15,12 +20,15 @@ class MigrationExecutor(object):
         self.recorder = MigrationRecorder(self.connection)
         self.progress_callback = progress_callback
 
-    def migration_plan(self, targets):
+    def migration_plan(self, targets, clean_start=False):
         """
         Given a set of targets, returns a list of (Migration instance, backwards?).
         """
         plan = []
-        applied = set(self.loader.applied_migrations)
+        if clean_start:
+            applied = set()
+        else:
+            applied = set(self.loader.applied_migrations)
         for target in targets:
             # If the target is (app_label, None), that means unmigrate everything
             if target[1] is None:
@@ -33,12 +41,17 @@ class MigrationExecutor(object):
             # If the migration is already applied, do backwards mode,
             # otherwise do forwards mode.
             elif target in applied:
-                backwards_plan = self.loader.graph.backwards_plan(target)[:-1]
-                # We only do this if the migration is not the most recent one
-                # in its app - that is, another migration with the same app
-                # label is in the backwards plan
-                if any(node[0] == target[0] for node in backwards_plan):
-                    for migration in backwards_plan:
+                # Don't migrate backwards all the way to the target node (that
+                # may roll back dependencies in other apps that don't need to
+                # be rolled back); instead roll back through target's immediate
+                # child(ren) in the same app, and no further.
+                next_in_app = sorted(
+                    n for n in
+                    self.loader.graph.node_map[target].children
+                    if n[0] == target[0]
+                )
+                for node in next_in_app:
+                    for migration in self.loader.graph.backwards_plan(node):
                         if migration in applied:
                             plan.append((self.loader.graph.nodes[migration], True))
                             applied.remove(migration)
@@ -49,17 +62,38 @@ class MigrationExecutor(object):
                         applied.add(migration)
         return plan
 
-    def migrate(self, targets, plan=None, fake=False):
+    def migrate(self, targets, plan=None, fake=False, fake_initial=False):
         """
         Migrates the database up to the given targets.
+
+        Django first needs to create all project states before a migration is
+        (un)applied and in a second step run all the database operations.
         """
         if plan is None:
             plan = self.migration_plan(targets)
+        migrations_to_run = {m[0] for m in plan}
+        # Create the forwards plan Django would follow on an empty database
+        full_plan = self.migration_plan(self.loader.graph.leaf_nodes(), clean_start=True)
+        # Holds all states right before and right after a migration is applied
+        # if the migration is being run.
+        states = {}
+        state = ProjectState(real_apps=list(self.loader.unmigrated_apps))
+        if self.progress_callback:
+            self.progress_callback("render_start")
+        state.apps  # Render all real_apps -- performance critical
+        if self.progress_callback:
+            self.progress_callback("render_success")
+        # Phase 1 -- Store all required states
+        for migration, _ in full_plan:
+            if migration in migrations_to_run:
+                states[migration] = state.clone()
+            state = migration.mutate_state(state)  # state is cloned inside
+        # Phase 2 -- Run the migrations
         for migration, backwards in plan:
             if not backwards:
-                self.apply_migration(migration, fake=fake)
+                self.apply_migration(states[migration], migration, fake=fake, fake_initial=fake_initial)
             else:
-                self.unapply_migration(migration, fake=fake)
+                self.unapply_migration(states[migration], migration, fake=fake)
 
     def collect_sql(self, plan):
         """
@@ -67,31 +101,34 @@ class MigrationExecutor(object):
         statements that represent the best-efforts version of that plan.
         """
         statements = []
+        state = None
         for migration, backwards in plan:
             with self.connection.schema_editor(collect_sql=True) as schema_editor:
-                project_state = self.loader.graph.project_state((migration.app_label, migration.name), at_end=False)
+                if state is None:
+                    state = self.loader.project_state((migration.app_label, migration.name), at_end=False)
                 if not backwards:
-                    migration.apply(project_state, schema_editor, collect_sql=True)
+                    state = migration.apply(state, schema_editor, collect_sql=True)
                 else:
-                    migration.unapply(project_state, schema_editor, collect_sql=True)
+                    state = migration.unapply(state, schema_editor, collect_sql=True)
             statements.extend(schema_editor.collected_sql)
         return statements
 
-    def apply_migration(self, migration, fake=False):
+    def apply_migration(self, state, migration, fake=False, fake_initial=False):
         """
         Runs a migration forwards.
         """
         if self.progress_callback:
             self.progress_callback("apply_start", migration, fake)
         if not fake:
-            # Test to see if this is an already-applied initial migration
-            if self.detect_soft_applied(migration):
-                fake = True
-            else:
+            if fake_initial:
+                # Test to see if this is an already-applied initial migration
+                applied, state = self.detect_soft_applied(state, migration)
+                if applied:
+                    fake = True
+            if not fake:
                 # Alright, do it normally
                 with self.connection.schema_editor() as schema_editor:
-                    project_state = self.loader.graph.project_state((migration.app_label, migration.name), at_end=False)
-                    migration.apply(project_state, schema_editor)
+                    state = migration.apply(state, schema_editor)
         # For replacement migrations, record individual statuses
         if migration.replaces:
             for app_label, name in migration.replaces:
@@ -101,8 +138,9 @@ class MigrationExecutor(object):
         # Report progress
         if self.progress_callback:
             self.progress_callback("apply_success", migration, fake)
+        return state
 
-    def unapply_migration(self, migration, fake=False):
+    def unapply_migration(self, state, migration, fake=False):
         """
         Runs a migration backwards.
         """
@@ -110,8 +148,7 @@ class MigrationExecutor(object):
             self.progress_callback("unapply_start", migration, fake)
         if not fake:
             with self.connection.schema_editor() as schema_editor:
-                project_state = self.loader.graph.project_state((migration.app_label, migration.name), at_end=False)
-                migration.unapply(project_state, schema_editor)
+                state = migration.unapply(state, schema_editor)
         # For replacement migrations, record individual statuses
         if migration.replaces:
             for app_label, name in migration.replaces:
@@ -121,20 +158,34 @@ class MigrationExecutor(object):
         # Report progress
         if self.progress_callback:
             self.progress_callback("unapply_success", migration, fake)
+        return state
 
-    def detect_soft_applied(self, migration):
+    def detect_soft_applied(self, project_state, migration):
         """
         Tests whether a migration has been implicitly applied - that the
         tables it would create exist. This is intended only for use
         on initial migrations (as it only looks for CreateModel).
         """
-        project_state = self.loader.graph.project_state((migration.app_label, migration.name), at_end=True)
-        apps = project_state.render()
+        # Bail if the migration isn't the first one in its app
+        if [name for app, name in migration.dependencies if app == migration.app_label]:
+            return False, project_state
+        if project_state is None:
+            after_state = self.loader.project_state((migration.app_label, migration.name), at_end=True)
+        else:
+            after_state = migration.mutate_state(project_state)
+        apps = after_state.apps
+        found_create_migration = False
+        # Make sure all create model are done
         for operation in migration.operations:
             if isinstance(operation, migrations.CreateModel):
                 model = apps.get_model(migration.app_label, operation.name)
-                if model._meta.db_table not in self.connection.introspection.get_table_list(self.connection.cursor()):
-                    return False
-            else:
-                return False
-        return True
+                if model._meta.swapped:
+                    # We have to fetch the model to test with from the
+                    # main app cache, as it's not a direct dependency.
+                    model = global_apps.get_model(model._meta.swapped)
+                if model._meta.db_table not in self.connection.introspection.table_names(self.connection.cursor()):
+                    return False, project_state
+                found_create_migration = True
+        # If we get this far and we found at least one CreateModel migration,
+        # the migration is considered implicitly applied.
+        return found_create_migration, after_state

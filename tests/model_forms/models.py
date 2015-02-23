@@ -17,11 +17,11 @@ from django.core.exceptions import ValidationError
 from django.core.files.storage import FileSystemStorage
 from django.db import models
 from django.utils import six
-from django.utils.encoding import python_2_unicode_compatible
 from django.utils._os import upath
+from django.utils.encoding import python_2_unicode_compatible
+from django.utils.six.moves import range
 
-
-temp_storage_dir = tempfile.mkdtemp(dir=os.environ['DJANGO_TEST_TEMP_DIR'])
+temp_storage_dir = tempfile.mkdtemp()
 temp_storage = FileSystemStorage(temp_storage_dir)
 
 ARTICLE_STATUS = (
@@ -357,7 +357,7 @@ class Colour(models.Model):
     name = models.CharField(max_length=50)
 
     def __iter__(self):
-        for number in xrange(5):
+        for number in range(5):
             yield number
 
     def __str__(self):
@@ -381,6 +381,8 @@ class CustomErrorMessage(models.Model):
     def clean(self):
         if self.name1 == 'FORBIDDEN_VALUE':
             raise ValidationError({'name1': [ValidationError('Model.clean() error messages.')]})
+        elif self.name1 == 'FORBIDDEN_VALUE2':
+            raise ValidationError({'name1': 'Model.clean() error messages (simpler syntax).'})
         elif self.name1 == 'GLOBAL_ERROR':
             raise ValidationError("Global error message.")
 
@@ -401,3 +403,25 @@ class Character(models.Model):
 class StumpJoke(models.Model):
     most_recently_fooled = models.ForeignKey(Character, limit_choices_to=today_callable_dict, related_name="+")
     has_fooled_today = models.ManyToManyField(Character, limit_choices_to=today_callable_q, related_name="+")
+
+
+# Model for #13776
+class Student(models.Model):
+    character = models.ForeignKey(Character)
+    study = models.CharField(max_length=30)
+
+
+# Model for #639
+class Photo(models.Model):
+    title = models.CharField(max_length=30)
+    image = models.FileField(storage=temp_storage, upload_to='tests')
+
+    # Support code for the tests; this keeps track of how many times save()
+    # gets called on each instance.
+    def __init__(self, *args, **kwargs):
+        super(Photo, self).__init__(*args, **kwargs)
+        self._savecount = 0
+
+    def save(self, force_insert=False, force_update=False):
+        super(Photo, self).save(force_insert, force_update)
+        self._savecount += 1

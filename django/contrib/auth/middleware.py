@@ -2,7 +2,6 @@ from django.contrib import auth
 from django.contrib.auth import load_backend
 from django.contrib.auth.backends import RemoteUserBackend
 from django.core.exceptions import ImproperlyConfigured
-from django.utils.crypto import constant_time_compare
 from django.utils.functional import SimpleLazyObject
 
 
@@ -25,20 +24,15 @@ class AuthenticationMiddleware(object):
 
 class SessionAuthenticationMiddleware(object):
     """
-    Middleware for invalidating a user's sessions that don't correspond to the
-    user's current session authentication hash (generated based on the user's
-    password for AbstractUser).
+    Formerly, a middleware for invalidating a user's sessions that don't
+    correspond to the user's current session authentication hash. However, it
+    caused the "Vary: Cookie" header on all responses.
+
+    Now a backwards compatibility shim that enables session verification in
+    auth.get_user() if this middleware is in MIDDLEWARE_CLASSES.
     """
     def process_request(self, request):
-        user = request.user
-        if user and hasattr(user, 'get_session_auth_hash'):
-            session_hash = request.session.get(auth.HASH_SESSION_KEY)
-            session_hash_verified = session_hash and constant_time_compare(
-                session_hash,
-                user.get_session_auth_hash()
-            )
-            if not session_hash_verified:
-                auth.logout(request)
+        pass
 
 
 class RemoteUserMiddleware(object):
@@ -76,14 +70,7 @@ class RemoteUserMiddleware(object):
             # authenticated remote-user, or return (leaving request.user set to
             # AnonymousUser by the AuthenticationMiddleware).
             if request.user.is_authenticated():
-                try:
-                    stored_backend = load_backend(request.session.get(
-                        auth.BACKEND_SESSION_KEY, ''))
-                    if isinstance(stored_backend, RemoteUserBackend):
-                        auth.logout(request)
-                except ImportError:
-                    # backend failed to load
-                    auth.logout(request)
+                self._remove_invalid_user(request)
             return
         # If the user is already authenticated and that user is the user we are
         # getting passed in the headers, then the correct user is already
@@ -91,6 +78,11 @@ class RemoteUserMiddleware(object):
         if request.user.is_authenticated():
             if request.user.get_username() == self.clean_username(username, request):
                 return
+            else:
+                # An authenticated user is associated with the request, but
+                # it does not match the authorized user in the header.
+                self._remove_invalid_user(request)
+
         # We are seeing this user for the first time in this session, attempt
         # to authenticate the user.
         user = auth.authenticate(remote_user=username)
@@ -112,3 +104,17 @@ class RemoteUserMiddleware(object):
         except AttributeError:  # Backend has no clean_username method.
             pass
         return username
+
+    def _remove_invalid_user(self, request):
+        """
+        Removes the current authenticated user in the request which is invalid
+        but only if the user is authenticated via the RemoteUserBackend.
+        """
+        try:
+            stored_backend = load_backend(request.session.get(auth.BACKEND_SESSION_KEY, ''))
+        except ImportError:
+            # backend failed to load
+            auth.logout(request)
+        else:
+            if isinstance(stored_backend, RemoteUserBackend):
+                auth.logout(request)

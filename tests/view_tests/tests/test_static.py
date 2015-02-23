@@ -1,11 +1,11 @@
 from __future__ import unicode_literals
 
 import mimetypes
-from os import path
 import unittest
+from os import path
 
 from django.conf.urls.static import static
-from django.http import HttpResponseNotModified
+from django.http import FileResponse, HttpResponseNotModified
 from django.test import SimpleTestCase, override_settings
 from django.utils.http import http_date
 from django.views.static import was_modified_since
@@ -32,9 +32,20 @@ class StaticTests(SimpleTestCase):
             self.assertEqual(len(response_content), int(response['Content-Length']))
             self.assertEqual(mimetypes.guess_type(file_path)[1], response.get('Content-Encoding', None))
 
+    def test_chunked(self):
+        "The static view should stream files in chunks to avoid large memory usage"
+        response = self.client.get('/%s/%s' % (self.prefix, 'long-line.txt'))
+        first_chunk = next(response.streaming_content)
+        self.assertEqual(len(first_chunk), FileResponse.block_size)
+        second_chunk = next(response.streaming_content)
+        response.close()
+        # strip() to prevent OS line endings from causing differences
+        self.assertEqual(len(second_chunk.strip()), 1449)
+
     def test_unknown_mime_type(self):
         response = self.client.get('/%s/file.unknown' % self.prefix)
         self.assertEqual('application/octet-stream', response['Content-Type'])
+        response.close()
 
     def test_copes_with_empty_path_component(self):
         file_name = 'file.txt'

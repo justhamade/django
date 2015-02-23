@@ -1,27 +1,30 @@
 """Default variable filters."""
 from __future__ import unicode_literals
 
-import re
 import random as random_module
-from decimal import Decimal, InvalidOperation, Context, ROUND_HALF_UP
+import re
+import warnings
+from decimal import ROUND_HALF_UP, Context, Decimal, InvalidOperation
 from functools import wraps
 from pprint import pformat
 
-from django.template.base import Variable, Library, VariableDoesNotExist
 from django.conf import settings
-from django.utils import formats
+from django.template.base import Library, Variable, VariableDoesNotExist
+from django.utils import formats, six
 from django.utils.dateformat import format, time_format
+from django.utils.deprecation import RemovedInDjango20Warning
 from django.utils.encoding import force_text, iri_to_uri
-from django.utils.html import (conditional_escape, escapejs,
-    escape, urlize as _urlize, linebreaks, strip_tags, avoid_wrapping,
-    remove_tags)
+from django.utils.html import (
+    avoid_wrapping, conditional_escape, escape, escapejs, linebreaks,
+    remove_tags, strip_tags, urlize as _urlize,
+)
 from django.utils.http import urlquote
-from django.utils.text import Truncator, wrap, phone2numeric
-from django.utils.safestring import mark_safe, SafeData, mark_for_escaping
-from django.utils import six
+from django.utils.safestring import SafeData, mark_for_escaping, mark_safe
+from django.utils.text import (
+    Truncator, normalize_newlines, phone2numeric, slugify as _slugify, wrap,
+)
 from django.utils.timesince import timesince, timeuntil
 from django.utils.translation import ugettext, ungettext
-from django.utils.text import normalize_newlines, slugify as _slugify
 
 register = Library()
 
@@ -226,9 +229,9 @@ def make_list(value):
 @stringfilter
 def slugify(value):
     """
-    Converts to lowercase, removes non-word characters (alphanumerics and
-    underscores) and converts spaces to hyphens. Also strips leading and
-    trailing whitespace.
+    Converts to ASCII. Converts spaces to hyphens. Removes characters that
+    aren't alphanumerics, underscores, or hyphens. Converts to lowercase.
+    Also strips leading and trailing whitespace.
     """
     return _slugify(value)
 
@@ -578,7 +581,7 @@ def length(value):
     try:
         return len(value)
     except (ValueError, TypeError):
-        return ''
+        return 0
 
 
 @register.filter(is_safe=False)
@@ -676,36 +679,44 @@ def unordered_list(value, autoescape=None):
             second_item = new_second_item
         return [first_item, second_item], old_style_list
 
-    def _helper(list_, tabs=1):
+    def walk_items(item_list):
+        item_iterator = iter(item_list)
+        for item in item_iterator:
+            try:
+                next_item = next(item_iterator)
+            except StopIteration:
+                next_item = None
+            if not isinstance(next_item, six.string_types):
+                try:
+                    iter(next_item)
+                except TypeError:
+                    pass
+                else:
+                    yield item, next_item
+                    continue
+            yield item, None
+            if next_item:
+                yield next_item, None
+
+    def list_formatter(item_list, tabs=1):
         indent = '\t' * tabs
         output = []
-
-        list_length = len(list_)
-        i = 0
-        while i < list_length:
-            title = list_[i]
+        for item, children in walk_items(item_list):
             sublist = ''
-            sublist_item = None
-            if isinstance(title, (list, tuple)):
-                sublist_item = title
-                title = ''
-            elif i < list_length - 1:
-                next_item = list_[i + 1]
-                if next_item and isinstance(next_item, (list, tuple)):
-                    # The next item is a sub-list.
-                    sublist_item = next_item
-                    # We've processed the next item now too.
-                    i += 1
-            if sublist_item:
-                sublist = _helper(sublist_item, tabs + 1)
-                sublist = '\n%s<ul>\n%s\n%s</ul>\n%s' % (indent, sublist,
-                                                         indent, indent)
-            output.append('%s<li>%s%s</li>' % (indent,
-                    escaper(force_text(title)), sublist))
-            i += 1
+            if children:
+                sublist = '\n%s<ul>\n%s\n%s</ul>\n%s' % (
+                    indent, list_formatter(children, tabs + 1), indent, indent)
+            output.append('%s<li>%s%s</li>' % (
+                indent, escaper(force_text(item)), sublist))
         return '\n'.join(output)
+
     value, converted = convert_old_style_list(value)
-    return mark_safe(_helper(value))
+    if converted:
+        warnings.warn(
+            "The old style syntax in `unordered_list` is deprecated and will "
+            "be removed in Django 2.0. Use the the new format instead.",
+            RemovedInDjango20Warning)
+    return mark_safe(list_formatter(value))
 
 
 ###################
@@ -934,7 +945,7 @@ def pluralize(value, arg='s'):
     singular_suffix, plural_suffix = bits[:2]
 
     try:
-        if int(value) != 1:
+        if float(value) != 1:
             return plural_suffix
     except ValueError:  # Invalid string that's not a number.
         pass
@@ -959,4 +970,4 @@ def pprint(value):
     try:
         return pformat(value)
     except Exception as e:
-        return "Error in formatting: %s" % force_text(e, errors="replace")
+        return "Error in formatting: %s: %s" % (e.__class__.__name__, force_text(e, errors="replace"))

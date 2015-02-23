@@ -3,8 +3,10 @@ from __future__ import unicode_literals
 
 import datetime
 
-from django.forms import (CharField, DateField, FileField, Form, IntegerField,
-    SplitDateTimeField, ValidationError, formsets)
+from django.forms import (
+    CharField, DateField, FileField, Form, IntegerField, SplitDateTimeField,
+    ValidationError, formsets,
+)
 from django.forms.formsets import BaseFormSet, formset_factory
 from django.forms.utils import ErrorList
 from django.test import TestCase
@@ -216,7 +218,7 @@ class FormsFormsetTestCase(TestCase):
 
     def test_min_num_displaying_more_than_one_blank_form(self):
         # We can also display more than 1 empty form passing min_num argument
-        # to formset_factory. It will increment the extra argument
+        # to formset_factory. It will (essentially) increment the extra argument
         ChoiceFormSet = formset_factory(Choice, extra=1, min_num=1)
 
         formset = ChoiceFormSet(auto_id=False, prefix='choices')
@@ -224,6 +226,10 @@ class FormsFormsetTestCase(TestCase):
 
         for form in formset.forms:
             form_output.append(form.as_ul())
+
+        # Min_num forms are required; extra forms can be empty.
+        self.assertFalse(formset.forms[0].empty_permitted)
+        self.assertTrue(formset.forms[1].empty_permitted)
 
         self.assertHTMLEqual('\n'.join(form_output), """<li>Choice: <input type="text" name="choices-0-choice" /></li>
 <li>Votes: <input type="number" name="choices-0-votes" /></li>
@@ -457,7 +463,7 @@ class FormsFormsetTestCase(TestCase):
     def test_formsets_with_ordering(self):
         # FormSets with ordering ######################################################
         # We can also add ordering ability to a FormSet with an argument to
-        # formset_factory. This will add a integer field to each form instance. When
+        # formset_factory. This will add an integer field to each form instance. When
         # form validation succeeds, [form.cleaned_data for form in formset.forms] will have the data in the correct
         # order specified by the ordering fields. If a number is duplicated in the set
         # of ordering fields, for instance form 0 and form 3 are both marked as 1, then
@@ -889,7 +895,7 @@ class FormsFormsetTestCase(TestCase):
         except IndexError:
             pass
 
-        # Formets can override the default iteration order
+        # Formsets can override the default iteration order
         class BaseReverseFormSet(BaseFormSet):
             def __iter__(self):
                 return reversed(self.forms)

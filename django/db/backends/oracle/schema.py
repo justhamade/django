@@ -1,9 +1,11 @@
+import binascii
 import copy
 import datetime
 
-from django.utils import six
-from django.db.backends.schema import BaseDatabaseSchemaEditor
+from django.db.backends.base.schema import BaseDatabaseSchemaEditor
 from django.db.utils import DatabaseError
+from django.utils import six
+from django.utils.text import force_text
 
 
 class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
@@ -21,7 +23,9 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
         if isinstance(value, (datetime.date, datetime.time, datetime.datetime)):
             return "'%s'" % value
         elif isinstance(value, six.string_types):
-            return repr(value)
+            return "'%s'" % six.text_type(value).replace("\'", "\'\'")
+        elif isinstance(value, six.buffer_types):
+            return "'%s'" % force_text(binascii.hexlify(value))
         elif isinstance(value, bool):
             return "1" if value else "0"
         else:
@@ -83,13 +87,11 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
         self.remove_field(model, old_field)
         # Rename the new field
         self.alter_field(model, new_temp_field, new_field)
-        # Close the connection to force cx_Oracle to get column types right
-        # on a new cursor
-        self.connection.close()
 
     def normalize_name(self, name):
         """
-        Get the properly shortened and uppercased identifier as returned by quote_name(), but without the actual quotes.
+        Get the properly shortened and uppercased identifier as returned by
+        quote_name(), but without the actual quotes.
         """
         nn = self.quote_name(name)
         if nn[0] == '"' and nn[-1] == '"':

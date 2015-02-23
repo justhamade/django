@@ -2,9 +2,7 @@ from django.conf.urls import url
 
 from . import feeds
 
-
 urlpatterns = [
-    url(r'^syndication/complex/(?P<foo>.*)/$', feeds.ComplexFeed()),
     url(r'^syndication/rss2/$', feeds.TestRss2Feed()),
     url(r'^syndication/rss2/guid_ispermalink_true/$',
         feeds.TestRss2FeedWithGuidIsPermaLinkTrue()),

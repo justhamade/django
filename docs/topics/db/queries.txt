@@ -86,8 +86,8 @@ To save changes to an object that's already in the database, use
 Given a ``Blog`` instance ``b5`` that has already been saved to the database,
 this example changes its name and updates its record in the database::
 
-    >> b5.name = 'New name'
-    >> b5.save()
+    >>> b5.name = 'New name'
+    >>> b5.save()
 
 This performs an ``UPDATE`` SQL statement behind the scenes. Django doesn't hit
 the database until you explicitly call :meth:`~django.db.models.Model.save`.
@@ -146,8 +146,9 @@ and a filter is a limiting clause such as ``WHERE`` or ``LIMIT``.
 
 You get a :class:`~django.db.models.query.QuerySet` by using your model's
 :class:`~django.db.models.Manager`. Each model has at least one
-:class:`~django.db.models.Manager`, and it's called ``objects`` by
-default. Access it directly via the model class, like so::
+:class:`~django.db.models.Manager`, and it's called
+:attr:`~django.db.models.Model.objects` by default. Access it directly via the
+model class, like so::
 
     >>> Blog.objects
     <django.db.models.manager.Manager object at ...>
@@ -249,9 +250,9 @@ stored, used and reused.
 
 Example::
 
-    >> q1 = Entry.objects.filter(headline__startswith="What")
-    >> q2 = q1.exclude(pub_date__gte=datetime.date.today())
-    >> q3 = q1.filter(pub_date__gte=datetime.date.today())
+    >>> q1 = Entry.objects.filter(headline__startswith="What")
+    >>> q2 = q1.exclude(pub_date__gte=datetime.date.today())
+    >>> q3 = q1.filter(pub_date__gte=datetime.date.today())
 
 These three ``QuerySets`` are separate. The first is a base
 :class:`~django.db.models.query.QuerySet` containing all entries that contain a
@@ -392,7 +393,9 @@ Basic lookups keyword arguments take the form ``field__lookuptype=value``.
 
     >>> Entry.objects.filter(pub_date__lte='2006-01-01')
 
-translates (roughly) into the following SQL::
+translates (roughly) into the following SQL:
+
+.. code-block:: sql
 
     SELECT * FROM blog_entry WHERE pub_date <= '2006-01-01';
 
@@ -402,7 +405,7 @@ translates (roughly) into the following SQL::
    arguments whose names and values are evaluated at runtime. For more
    information, see `Keyword Arguments`_ in the official Python tutorial.
 
-   .. _`Keyword Arguments`: http://docs.python.org/tutorial/controlflow.html#keyword-arguments
+   .. _`Keyword Arguments`: https://docs.python.org/tutorial/controlflow.html#keyword-arguments
 
 The field specified in a lookup has to be the name of a model field. There's
 one exception though, in case of a :class:`~django.db.models.ForeignKey` you
@@ -614,10 +617,6 @@ and with other ``F()`` objects. To find all the blog entries with more than
 *twice* as many comments as pingbacks, we modify the query::
 
     >>> Entry.objects.filter(n_comments__gt=F('n_pingbacks') * 2)
-
-.. versionadded:: 1.7
-
-    The power operator ``**`` was added.
 
 To find all the entries where the rating of the entry is less than the
 sum of the pingback count and comment count, we would issue the
@@ -1146,8 +1145,6 @@ above example code would look like this::
 Using a custom reverse manager
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. versionadded:: 1.7
-
 By default the :class:`~django.db.models.fields.related.RelatedManager` used
 for reverse relations is a subclass of the :ref:`default manager <manager-names>`
 for that model. If you would like to specify a different manager for a given
@@ -1192,6 +1189,9 @@ be found in the :doc:`related objects reference </ref/models/relations>`.
 
 ``clear()``
     Removes all objects from the related object set.
+
+``set(objs)``
+    Replace the set of related objects.
 
 To assign the members of a related set in one fell swoop, just assign to it
 from any iterable object. The iterable can contain object instances, or just

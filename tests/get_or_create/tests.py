@@ -1,14 +1,16 @@
 from __future__ import unicode_literals
 
-from datetime import date
 import traceback
-import warnings
+from datetime import date
 
-from django.db import IntegrityError, DatabaseError
+from django.db import DatabaseError, IntegrityError
+from django.test import TestCase, TransactionTestCase, ignore_warnings
 from django.utils.encoding import DjangoUnicodeDecodeError
-from django.test import TestCase, TransactionTestCase
 
-from .models import DefaultPerson, Person, ManualPrimaryKeyTest, Profile, Tag, Thing
+from .models import (
+    Author, Book, DefaultPerson, ManualPrimaryKeyTest, Person, Profile,
+    Publisher, Tag, Thing,
+)
 
 
 class GetOrCreateTests(TestCase):
@@ -19,40 +21,38 @@ class GetOrCreateTests(TestCase):
         )
 
     def test_get_or_create_method_with_get(self):
-        p, created = Person.objects.get_or_create(
+        created = Person.objects.get_or_create(
             first_name="John", last_name="Lennon", defaults={
                 "birthday": date(1940, 10, 9)
             }
-        )
+        )[1]
         self.assertFalse(created)
         self.assertEqual(Person.objects.count(), 1)
 
-
     def test_get_or_create_method_with_create(self):
-        p, created = Person.objects.get_or_create(
+        created = Person.objects.get_or_create(
             first_name='George', last_name='Harrison', defaults={
                 'birthday': date(1943, 2, 25)
             }
-        )
+        )[1]
         self.assertTrue(created)
         self.assertEqual(Person.objects.count(), 2)
-
 
     def test_get_or_create_redundant_instance(self):
         """
         If we execute the exact same statement twice, the second time,
         it won't create a Person.
         """
-        george, created = Person.objects.get_or_create(
+        Person.objects.get_or_create(
             first_name='George', last_name='Harrison', defaults={
                 'birthday': date(1943, 2, 25)
             }
         )
-        evil_george, created = Person.objects.get_or_create(
+        created = Person.objects.get_or_create(
             first_name='George', last_name='Harrison', defaults={
                 'birthday': date(1943, 2, 25)
             }
-        )
+        )[1]
 
         self.assertFalse(created)
         self.assertEqual(Person.objects.count(), 2)
@@ -66,6 +66,66 @@ class GetOrCreateTests(TestCase):
             IntegrityError,
             Person.objects.get_or_create, first_name="Tom", last_name="Smith"
         )
+
+    def test_get_or_create_on_related_manager(self):
+        p = Publisher.objects.create(name="Acme Publishing")
+        # Create a book through the publisher.
+        book, created = p.books.get_or_create(name="The Book of Ed & Fred")
+        self.assertTrue(created)
+        # The publisher should have one book.
+        self.assertEqual(p.books.count(), 1)
+
+        # Try get_or_create again, this time nothing should be created.
+        book, created = p.books.get_or_create(name="The Book of Ed & Fred")
+        self.assertFalse(created)
+        # And the publisher should still have one book.
+        self.assertEqual(p.books.count(), 1)
+
+        # Add an author to the book.
+        ed, created = book.authors.get_or_create(name="Ed")
+        self.assertTrue(created)
+        # The book should have one author.
+        self.assertEqual(book.authors.count(), 1)
+
+        # Try get_or_create again, this time nothing should be created.
+        ed, created = book.authors.get_or_create(name="Ed")
+        self.assertFalse(created)
+        # And the book should still have one author.
+        self.assertEqual(book.authors.count(), 1)
+
+        # Add a second author to the book.
+        fred, created = book.authors.get_or_create(name="Fred")
+        self.assertTrue(created)
+
+        # The book should have two authors now.
+        self.assertEqual(book.authors.count(), 2)
+
+        # Create an Author not tied to any books.
+        Author.objects.create(name="Ted")
+
+        # There should be three Authors in total. The book object should have two.
+        self.assertEqual(Author.objects.count(), 3)
+        self.assertEqual(book.authors.count(), 2)
+
+        # Try creating a book through an author.
+        _, created = ed.books.get_or_create(name="Ed's Recipes", publisher=p)
+        self.assertTrue(created)
+
+        # Now Ed has two Books, Fred just one.
+        self.assertEqual(ed.books.count(), 2)
+        self.assertEqual(fred.books.count(), 1)
+
+        # Use the publisher's primary key value instead of a model instance.
+        _, created = ed.books.get_or_create(name='The Great Book of Ed', publisher_id=p.id)
+        self.assertTrue(created)
+
+        # Try get_or_create again, this time nothing should be created.
+        _, created = ed.books.get_or_create(name='The Great Book of Ed', publisher_id=p.id)
+        self.assertFalse(created)
+
+        # The publisher should have three books.
+        self.assertEqual(p.books.count(), 3)
+
 
 class GetOrCreateTestsWithManualPKs(TestCase):
 
@@ -96,18 +156,17 @@ class GetOrCreateTestsWithManualPKs(TestCase):
             formatted_traceback = traceback.format_exc()
             self.assertIn(str('obj.save'), formatted_traceback)
 
+    # MySQL emits a warning when broken data is saved
+    @ignore_warnings(module='django.db.backends.mysql.base')
     def test_savepoint_rollback(self):
         """
         Regression test for #20463: the database connection should still be
         usable after a DataError or ProgrammingError in .get_or_create().
         """
         try:
-            # Hide warnings when broken data is saved with a warning (MySQL).
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore')
-                Person.objects.get_or_create(
-                    birthday=date(1970, 1, 1),
-                    defaults={'first_name': b"\xff", 'last_name': b"\xff"})
+            Person.objects.get_or_create(
+                birthday=date(1970, 1, 1),
+                defaults={'first_name': b"\xff", 'last_name': b"\xff"})
         except (DatabaseError, DjangoUnicodeDecodeError):
             Person.objects.create(
                 first_name="Bob", last_name="Ross", birthday=date(1950, 1, 1))
@@ -238,3 +297,54 @@ class UpdateOrCreateTests(TestCase):
         except IntegrityError:
             formatted_traceback = traceback.format_exc()
             self.assertIn('obj.save', formatted_traceback)
+
+    def test_create_with_related_manager(self):
+        """
+        Should be able to use update_or_create from the related manager to
+        create a book. Refs #23611.
+        """
+        p = Publisher.objects.create(name="Acme Publishing")
+        book, created = p.books.update_or_create(name="The Book of Ed & Fred")
+        self.assertTrue(created)
+        self.assertEqual(p.books.count(), 1)
+
+    def test_update_with_related_manager(self):
+        """
+        Should be able to use update_or_create from the related manager to
+        update a book. Refs #23611.
+        """
+        p = Publisher.objects.create(name="Acme Publishing")
+        book = Book.objects.create(name="The Book of Ed & Fred", publisher=p)
+        self.assertEqual(p.books.count(), 1)
+        name = "The Book of Django"
+        book, created = p.books.update_or_create(defaults={'name': name}, id=book.id)
+        self.assertFalse(created)
+        self.assertEqual(book.name, name)
+        self.assertEqual(p.books.count(), 1)
+
+    def test_create_with_many(self):
+        """
+        Should be able to use update_or_create from the m2m related manager to
+        create a book. Refs #23611.
+        """
+        p = Publisher.objects.create(name="Acme Publishing")
+        author = Author.objects.create(name="Ted")
+        book, created = author.books.update_or_create(name="The Book of Ed & Fred", publisher=p)
+        self.assertTrue(created)
+        self.assertEqual(author.books.count(), 1)
+
+    def test_update_with_many(self):
+        """
+        Should be able to use update_or_create from the m2m related manager to
+        update a book. Refs #23611.
+        """
+        p = Publisher.objects.create(name="Acme Publishing")
+        author = Author.objects.create(name="Ted")
+        book = Book.objects.create(name="The Book of Ed & Fred", publisher=p)
+        book.authors.add(author)
+        self.assertEqual(author.books.count(), 1)
+        name = "The Book of Django"
+        book, created = author.books.update_or_create(defaults={'name': name}, id=book.id)
+        self.assertFalse(created)
+        self.assertEqual(book.name, name)
+        self.assertEqual(author.books.count(), 1)

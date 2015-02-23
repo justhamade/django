@@ -1,8 +1,8 @@
 .. _Generic views:
 
-=========================
-Class-based generic views
-=========================
+==================================
+Built-in Class-based generic views
+==================================
 
 Writing Web applications can be monotonous, because we repeat certain patterns
 again and again. Django tries to take away some of that monotony at the model
@@ -136,10 +136,9 @@ bit is just the lowercased version of the model's name.
 
 .. note::
 
-    Thus, when (for example) the
-    :class:`django.template.loaders.app_directories.Loader` template loader is
-    enabled in :setting:`TEMPLATE_LOADERS`, a template location could be:
-    /path/to/project/books/templates/books/publisher_list.html
+    Thus, when (for example) the ``APP_DIRS`` option of a ``DjangoTemplates``
+    backend is set to True in :setting:`TEMPLATES`, a template location could
+    be: /path/to/project/books/templates/books/publisher_list.html
 
 This template will be rendered against a context containing a variable called
 ``object_list`` that contains all the publisher objects. A very simple template
@@ -401,7 +400,7 @@ custom view::
 
     urlpatterns = [
         #...
-        url(r'^authors/(?P<pk>\d+)/$', AuthorDetailView.as_view(), name='author-detail'),
+        url(r'^authors/(?P<pk>[0-9]+)/$', AuthorDetailView.as_view(), name='author-detail'),
     ]
 
 Then we'd write our new view -- ``get_object`` is the method that retrieves the

@@ -2,27 +2,29 @@
 from __future__ import unicode_literals
 
 import os
-import sys
 import re
-from datetime import datetime
-from itertools import groupby, cycle as itertools_cycle
+import sys
 import warnings
+from datetime import datetime
+from itertools import cycle as itertools_cycle, groupby
 
 from django.conf import settings
-from django.template.base import (Node, NodeList, Template, Context, Library,
-    TemplateSyntaxError, VariableDoesNotExist, InvalidTemplateLibrary,
-    BLOCK_TAG_START, BLOCK_TAG_END, VARIABLE_TAG_START, VARIABLE_TAG_END,
-    SINGLE_BRACE_START, SINGLE_BRACE_END, COMMENT_TAG_START, COMMENT_TAG_END,
-    VARIABLE_ATTRIBUTE_SEPARATOR, get_library, token_kwargs, kwarg_re,
-    render_value_in_context)
-from django.template.smartif import IfParser, Literal
+from django.template.base import (
+    BLOCK_TAG_END, BLOCK_TAG_START, COMMENT_TAG_END, COMMENT_TAG_START,
+    SINGLE_BRACE_END, SINGLE_BRACE_START, VARIABLE_ATTRIBUTE_SEPARATOR,
+    VARIABLE_TAG_END, VARIABLE_TAG_START, Context, InvalidTemplateLibrary,
+    Library, Node, NodeList, Template, TemplateSyntaxError,
+    VariableDoesNotExist, get_library, kwarg_re, render_value_in_context,
+    token_kwargs,
+)
 from django.template.defaultfilters import date
+from django.template.smartif import IfParser, Literal
+from django.utils import six, timezone
 from django.utils.deprecation import RemovedInDjango20Warning
 from django.utils.encoding import force_text, smart_text
-from django.utils.safestring import mark_safe
 from django.utils.html import format_html
-from django.utils import six
-from django.utils import timezone
+from django.utils.lorem_ipsum import paragraphs, words
+from django.utils.safestring import mark_safe
 
 register = Library()
 
@@ -55,12 +57,16 @@ class CsrfTokenNode(Node):
             if csrf_token == 'NOTPROVIDED':
                 return format_html("")
             else:
-                return format_html("<input type='hidden' name='csrfmiddlewaretoken' value='{0}' />", csrf_token)
+                return format_html("<input type='hidden' name='csrfmiddlewaretoken' value='{}' />", csrf_token)
         else:
             # It's very probable that the token is missing because of
             # misconfiguration, so we raise a warning
             if settings.DEBUG:
-                warnings.warn("A {% csrf_token %} was used in a template, but the context did not provide the value.  This is usually caused by not using RequestContext.")
+                warnings.warn(
+                    "A {% csrf_token %} was used in a template, but the context "
+                    "did not provide the value.  This is usually caused by not "
+                    "using RequestContext."
+                )
             return ''
 
 
@@ -86,9 +92,9 @@ class CycleNode(Node):
 class DebugNode(Node):
     def render(self, context):
         from pprint import pformat
-        output = [pformat(val) for val in context]
+        output = [force_text(pformat(val)) for val in context]
         output.append('\n\n')
-        output.append(pformat(sys.modules))
+        output.append(force_text(pformat(sys.modules)))
         return ''.join(output)
 
 
@@ -190,7 +196,7 @@ class ForNode(Node):
                     # Check loop variable count before unpacking
                     if num_loopvars != len_item:
                         warnings.warn(
-                            "Need {0} values to unpack in for loop; got {1}. "
+                            "Need {} values to unpack in for loop; got {}. "
                             "This will raise an exception in Django 2.0."
                             .format(num_loopvars, len_item),
                             RemovedInDjango20Warning)
@@ -203,9 +209,9 @@ class ForNode(Node):
                         context.update(unpacked_vars)
                 else:
                     context[self.loopvars[0]] = item
-                # In TEMPLATE_DEBUG mode provide source of the node which
-                # actually raised the exception
-                if settings.TEMPLATE_DEBUG:
+                # In debug mode provide the source of the node which raised
+                # the exception
+                if context.template.engine.debug:
                     for node in self.nodelist_loop:
                         try:
                             nodelist.append(node.render(context))
@@ -253,7 +259,8 @@ class IfChangedNode(Node):
 
         if compare_to != state_frame[self]:
             state_frame[self] = compare_to
-            return nodelist_true_output or self.nodelist_true.render(context)  # render true block if not already rendered
+            # render true block if not already rendered
+            return nodelist_true_output or self.nodelist_true.render(context)
         elif self.nodelist_false:
             return self.nodelist_false.render(context)
         return ''
@@ -324,6 +331,24 @@ class IfNode(Node):
         return ''
 
 
+class LoremNode(Node):
+    def __init__(self, count, method, common):
+        self.count, self.method, self.common = count, method, common
+
+    def render(self, context):
+        try:
+            count = int(self.count.resolve(context))
+        except (ValueError, TypeError):
+            count = 1
+        if self.method == 'w':
+            return words(count, common=self.common)
+        else:
+            paras = paragraphs(count, common=self.common)
+        if self.method == 'p':
+            paras = ['<p>%s</p>' % p for p in paras]
+        return '\n\n'.join(paras)
+
+
 class RegroupNode(Node):
     def __init__(self, target, expression, var_name):
         self.target, self.expression = target, expression
@@ -351,9 +376,9 @@ class RegroupNode(Node):
         return ''
 
 
-def include_is_allowed(filepath):
+def include_is_allowed(filepath, allowed_include_roots):
     filepath = os.path.abspath(filepath)
-    for root in settings.ALLOWED_INCLUDE_ROOTS:
+    for root in allowed_include_roots:
         if filepath.startswith(root):
             return True
     return False
@@ -367,7 +392,7 @@ class SsiNode(Node):
     def render(self, context):
         filepath = self.filepath.resolve(context)
 
-        if not include_is_allowed(filepath):
+        if not include_is_allowed(filepath, context.template.engine.allowed_include_roots):
             if settings.DEBUG:
                 return "[Didn't have permission to include file]"
             else:
@@ -379,7 +404,7 @@ class SsiNode(Node):
             output = ''
         if self.parsed:
             try:
-                t = Template(output, name=filepath)
+                t = Template(output, name=filepath, engine=context.template.engine)
                 return t.render(context)
             except TemplateSyntaxError as e:
                 if settings.DEBUG:
@@ -395,12 +420,19 @@ class LoadNode(Node):
 
 
 class NowNode(Node):
-    def __init__(self, format_string):
+    def __init__(self, format_string, asvar=None):
         self.format_string = format_string
+        self.asvar = asvar
 
     def render(self, context):
         tzinfo = timezone.get_current_timezone() if settings.USE_TZ else None
-        return date(datetime.now(tz=tzinfo), self.format_string)
+        formatted = date(datetime.now(tz=tzinfo), self.format_string)
+
+        if self.asvar:
+            context[self.asvar] = formatted
+            return ''
+        else:
+            return formatted
 
 
 class SpacelessNode(Node):
@@ -445,13 +477,20 @@ class URLNode(Node):
 
         view_name = self.view_name.resolve(context)
 
+        try:
+            current_app = context.request.current_app
+        except AttributeError:
+            # Change the fallback value to None when the deprecation path for
+            # Context.current_app completes in Django 2.0.
+            current_app = context.current_app
+
         # Try to look up the URL twice: once given the view name, and again
         # relative to what we guess is the "main" app. If they both fail,
         # re-raise the NoReverseMatch unless we're using the
         # {% url ... as var %} construct in which case return nothing.
         url = ''
         try:
-            url = reverse(view_name, args=args, kwargs=kwargs, current_app=context.current_app)
+            url = reverse(view_name, args=args, kwargs=kwargs, current_app=current_app)
         except NoReverseMatch:
             exc_info = sys.exc_info()
             if settings.SETTINGS_MODULE:
@@ -459,7 +498,7 @@ class URLNode(Node):
                 try:
                     url = reverse(project_name + '.' + view_name,
                               args=args, kwargs=kwargs,
-                              current_app=context.current_app)
+                              current_app=current_app)
                 except NoReverseMatch:
                     if self.asvar is None:
                         # Re-raise the original exception, not the one with
@@ -531,8 +570,8 @@ class WithNode(Node):
         return "<WithNode>"
 
     def render(self, context):
-        values = dict((key, val.resolve(context)) for key, val in
-                      six.iteritems(self.extra_context))
+        values = {key: val.resolve(context) for key, val in
+                  six.iteritems(self.extra_context)}
         with context.push(**values):
             return self.nodelist.render(context)
 
@@ -961,7 +1000,7 @@ def do_if(parser, token):
     ``{% if 1>2 %}`` is not a valid if tag.
 
     All supported operators are: ``or``, ``and``, ``in``, ``not in``
-    ``==`` (or ``=``), ``!=``, ``>``, ``>=``, ``<`` and ``<=``.
+    ``==``, ``!=``, ``>``, ``>=``, ``<`` and ``<=``.
 
     Operator precedence follows Python.
     """
@@ -1050,6 +1089,11 @@ def ssi(parser, token):
 
         {% ssi "/home/html/ljworld.com/includes/right_generic.html" parsed %}
     """
+    warnings.warn(
+        "The {% ssi %} tag is deprecated. Use the {% include %} tag instead.",
+        RemovedInDjango20Warning,
+    )
+
     bits = token.split_contents()
     parsed = False
     if len(bits) not in (2, 3):
@@ -1117,6 +1161,53 @@ def load(parser, token):
 
 
 @register.tag
+def lorem(parser, token):
+    """
+    Creates random Latin text useful for providing test data in templates.
+
+    Usage format::
+
+        {% lorem [count] [method] [random] %}
+
+    ``count`` is a number (or variable) containing the number of paragraphs or
+    words to generate (default is 1).
+
+    ``method`` is either ``w`` for words, ``p`` for HTML paragraphs, ``b`` for
+    plain-text paragraph blocks (default is ``b``).
+
+    ``random`` is the word ``random``, which if given, does not use the common
+    paragraph (starting "Lorem ipsum dolor sit amet, consectetuer...").
+
+    Examples:
+
+    * ``{% lorem %}`` will output the common "lorem ipsum" paragraph
+    * ``{% lorem 3 p %}`` will output the common "lorem ipsum" paragraph
+      and two random paragraphs each wrapped in HTML ``<p>`` tags
+    * ``{% lorem 2 w random %}`` will output two random latin words
+    """
+    bits = list(token.split_contents())
+    tagname = bits[0]
+    # Random bit
+    common = bits[-1] != 'random'
+    if not common:
+        bits.pop()
+    # Method bit
+    if bits[-1] in ('w', 'p', 'b'):
+        method = bits.pop()
+    else:
+        method = 'b'
+    # Count bit
+    if len(bits) > 1:
+        count = bits.pop()
+    else:
+        count = '1'
+    count = parser.compile_filter(count)
+    if len(bits) != 1:
+        raise TemplateSyntaxError("Incorrect format for %r tag" % tagname)
+    return LoremNode(count, method, common)
+
+
+@register.tag
 def now(parser, token):
     """
     Displays the date, formatted according to the given string.
@@ -1129,10 +1220,14 @@ def now(parser, token):
         It is {% now "jS F Y H:i" %}
     """
     bits = token.split_contents()
+    asvar = None
+    if len(bits) == 4 and bits[-2] == 'as':
+        asvar = bits[-1]
+        bits = bits[:-2]
     if len(bits) != 2:
         raise TemplateSyntaxError("'now' statement takes one argument")
     format_string = bits[1][1:-1]
-    return NowNode(format_string)
+    return NowNode(format_string, asvar)
 
 
 @register.tag

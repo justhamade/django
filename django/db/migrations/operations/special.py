@@ -1,4 +1,7 @@
-import re
+from __future__ import unicode_literals
+
+from django.db import router
+
 from .base import Operation
 
 
@@ -14,6 +17,18 @@ class SeparateDatabaseAndState(Operation):
         self.database_operations = database_operations or []
         self.state_operations = state_operations or []
 
+    def deconstruct(self):
+        kwargs = {}
+        if self.database_operations:
+            kwargs['database_operations'] = self.database_operations
+        if self.state_operations:
+            kwargs['state_operations'] = self.state_operations
+        return (
+            self.__class__.__name__,
+            [],
+            kwargs
+        )
+
     def state_forwards(self, app_label, state):
         for state_operation in self.state_operations:
             state_operation.state_forwards(app_label, state)
@@ -23,7 +38,7 @@ class SeparateDatabaseAndState(Operation):
         for database_operation in self.database_operations:
             to_state = from_state.clone()
             database_operation.state_forwards(app_label, to_state)
-            database_operation.database_forwards(self, app_label, schema_editor, from_state, to_state)
+            database_operation.database_forwards(app_label, schema_editor, from_state, to_state)
             from_state = to_state
 
     def database_backwards(self, app_label, schema_editor, from_state, to_state):
@@ -35,7 +50,7 @@ class SeparateDatabaseAndState(Operation):
                 dbop.state_forwards(app_label, to_state)
             from_state = base_state.clone()
             database_operation.state_forwards(app_label, from_state)
-            database_operation.database_backwards(self, app_label, schema_editor, from_state, to_state)
+            database_operation.database_backwards(app_label, schema_editor, from_state, to_state)
 
     def describe(self):
         return "Custom state/database change combination"
@@ -43,20 +58,34 @@ class SeparateDatabaseAndState(Operation):
 
 class RunSQL(Operation):
     """
-    Runs some raw SQL - a single statement by default, but it will attempt
-    to parse and split it into multiple statements if multiple=True.
-
-    A reverse SQL statement may be provided.
+    Runs some raw SQL. A reverse SQL statement may be provided.
 
     Also accepts a list of operations that represent the state change effected
     by this SQL change, in case it's custom column/table creation/deletion.
     """
+    noop = ''
 
-    def __init__(self, sql, reverse_sql=None, state_operations=None, multiple=False):
+    def __init__(self, sql, reverse_sql=None, state_operations=None, hints=None):
         self.sql = sql
         self.reverse_sql = reverse_sql
         self.state_operations = state_operations or []
-        self.multiple = multiple
+        self.hints = hints or {}
+
+    def deconstruct(self):
+        kwargs = {
+            'sql': self.sql,
+        }
+        if self.reverse_sql is not None:
+            kwargs['reverse_sql'] = self.reverse_sql
+        if self.state_operations:
+            kwargs['state_operations'] = self.state_operations
+        if self.hints:
+            kwargs['hints'] = self.hints
+        return (
+            self.__class__.__name__,
+            [],
+            kwargs
+        )
 
     @property
     def reversible(self):
@@ -66,35 +95,34 @@ class RunSQL(Operation):
         for state_operation in self.state_operations:
             state_operation.state_forwards(app_label, state)
 
-    def _split_sql(self, sql):
-        regex = r"(?mx) ([^';]* (?:'[^']*'[^';]*)*)"
-        comment_regex = r"(?mx) (?:^\s*$)|(?:--.*$)"
-        # First, strip comments
-        sql = "\n".join([x.strip().replace("%", "%%") for x in re.split(comment_regex, sql) if x.strip()])
-        # Now get each statement
-        for st in re.split(regex, sql)[1:][::2]:
-            yield st
-
     def database_forwards(self, app_label, schema_editor, from_state, to_state):
-        if self.multiple:
-            statements = self._split_sql(self.sql)
-        else:
-            statements = [self.sql]
-        for statement in statements:
-            schema_editor.execute(statement)
+        if router.allow_migrate(schema_editor.connection.alias, app_label, **self.hints):
+            self._run_sql(schema_editor, self.sql)
 
     def database_backwards(self, app_label, schema_editor, from_state, to_state):
         if self.reverse_sql is None:
             raise NotImplementedError("You cannot reverse this operation")
-        if self.multiple:
-            statements = self._split_sql(self.reverse_sql)
-        else:
-            statements = [self.reverse_sql]
-        for statement in statements:
-            schema_editor.execute(statement)
+        if router.allow_migrate(schema_editor.connection.alias, app_label, **self.hints):
+            self._run_sql(schema_editor, self.reverse_sql)
 
     def describe(self):
         return "Raw SQL operation"
+
+    def _run_sql(self, schema_editor, sqls):
+        if isinstance(sqls, (list, tuple)):
+            for sql in sqls:
+                params = None
+                if isinstance(sql, (list, tuple)):
+                    elements = len(sql)
+                    if elements == 2:
+                        sql, params = sql
+                    else:
+                        raise ValueError("Expected a 2-tuple but got %d" % elements)
+                schema_editor.execute(sql, params=params)
+        elif sqls != RunSQL.noop:
+            statements = schema_editor.connection.ops.prepare_sql_script(sqls)
+            for statement in statements:
+                schema_editor.execute(statement, params=None)
 
 
 class RunPython(Operation):
@@ -104,7 +132,8 @@ class RunPython(Operation):
 
     reduces_to_sql = False
 
-    def __init__(self, code, reverse_code=None):
+    def __init__(self, code, reverse_code=None, atomic=True, hints=None):
+        self.atomic = atomic
         # Forwards code
         if not callable(code):
             raise ValueError("RunPython must be supplied with a callable")
@@ -116,6 +145,23 @@ class RunPython(Operation):
             if not callable(reverse_code):
                 raise ValueError("RunPython must be supplied with callable arguments")
             self.reverse_code = reverse_code
+        self.hints = hints or {}
+
+    def deconstruct(self):
+        kwargs = {
+            'code': self.code,
+        }
+        if self.reverse_code is not None:
+            kwargs['reverse_code'] = self.reverse_code
+        if self.atomic is not True:
+            kwargs['atomic'] = self.atomic
+        if self.hints:
+            kwargs['hints'] = self.hints
+        return (
+            self.__class__.__name__,
+            [],
+            kwargs
+        )
 
     @property
     def reversible(self):
@@ -127,16 +173,22 @@ class RunPython(Operation):
         pass
 
     def database_forwards(self, app_label, schema_editor, from_state, to_state):
-        # We now execute the Python code in a context that contains a 'models'
-        # object, representing the versioned models as an app registry.
-        # We could try to override the global cache, but then people will still
-        # use direct imports, so we go with a documentation approach instead.
-        self.code(from_state.render(), schema_editor)
+        if router.allow_migrate(schema_editor.connection.alias, app_label, **self.hints):
+            # We now execute the Python code in a context that contains a 'models'
+            # object, representing the versioned models as an app registry.
+            # We could try to override the global cache, but then people will still
+            # use direct imports, so we go with a documentation approach instead.
+            self.code(from_state.apps, schema_editor)
 
     def database_backwards(self, app_label, schema_editor, from_state, to_state):
         if self.reverse_code is None:
             raise NotImplementedError("You cannot reverse this operation")
-        self.reverse_code(from_state.render(), schema_editor)
+        if router.allow_migrate(schema_editor.connection.alias, app_label, **self.hints):
+            self.reverse_code(from_state.apps, schema_editor)
 
     def describe(self):
         return "Raw Python operation"
+
+    @staticmethod
+    def noop(apps, schema_editor):
+        return None

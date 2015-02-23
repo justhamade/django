@@ -5,7 +5,6 @@ from datetime import datetime
 
 from django.test import TestCase, override_settings
 
-
 FULL_RESPONSE = 'Test conditional get response'
 LAST_MODIFIED = datetime(2007, 10, 21, 23, 21, 47)
 LAST_MODIFIED_STR = 'Sun, 21 Oct 2007 23:21:47 GMT'
@@ -31,11 +30,11 @@ class ConditionalGet(TestCase):
         self.assertEqual(response.status_code, 304)
         self.assertEqual(response.content, b'')
 
-    def testWithoutConditions(self):
+    def test_without_conditions(self):
         response = self.client.get('/condition/')
         self.assertFullResponse(response)
 
-    def testIfModifiedSince(self):
+    def test_if_modified_since(self):
         self.client.defaults['HTTP_IF_MODIFIED_SINCE'] = LAST_MODIFIED_STR
         response = self.client.get('/condition/')
         self.assertNotModified(response)
@@ -49,7 +48,21 @@ class ConditionalGet(TestCase):
         response = self.client.get('/condition/')
         self.assertFullResponse(response)
 
-    def testIfNoneMatch(self):
+    def test_if_unmodified_since(self):
+        self.client.defaults['HTTP_IF_UNMODIFIED_SINCE'] = LAST_MODIFIED_STR
+        response = self.client.get('/condition/')
+        self.assertFullResponse(response)
+        self.client.defaults['HTTP_IF_UNMODIFIED_SINCE'] = LAST_MODIFIED_NEWER_STR
+        response = self.client.get('/condition/')
+        self.assertFullResponse(response)
+        self.client.defaults['HTTP_IF_UNMODIFIED_SINCE'] = LAST_MODIFIED_INVALID_STR
+        response = self.client.get('/condition/')
+        self.assertFullResponse(response)
+        self.client.defaults['HTTP_IF_UNMODIFIED_SINCE'] = EXPIRED_LAST_MODIFIED_STR
+        response = self.client.get('/condition/')
+        self.assertEqual(response.status_code, 412)
+
+    def test_if_none_match(self):
         self.client.defaults['HTTP_IF_NONE_MATCH'] = '"%s"' % ETAG
         response = self.client.get('/condition/')
         self.assertNotModified(response)
@@ -62,7 +75,7 @@ class ConditionalGet(TestCase):
         response = self.client.get('/condition/')
         self.assertNotModified(response)
 
-    def testIfMatch(self):
+    def test_if_match(self):
         self.client.defaults['HTTP_IF_MATCH'] = '"%s"' % ETAG
         response = self.client.put('/condition/etag/')
         self.assertEqual(response.status_code, 200)
@@ -70,7 +83,8 @@ class ConditionalGet(TestCase):
         response = self.client.put('/condition/etag/')
         self.assertEqual(response.status_code, 412)
 
-    def testBothHeaders(self):
+    def test_both_headers(self):
+        # see http://www.w3.org/Protocols/rfc2616/rfc2616-sec13.html#sec13.3.4
         self.client.defaults['HTTP_IF_MODIFIED_SINCE'] = LAST_MODIFIED_STR
         self.client.defaults['HTTP_IF_NONE_MATCH'] = '"%s"' % ETAG
         response = self.client.get('/condition/')
@@ -86,45 +100,95 @@ class ConditionalGet(TestCase):
         response = self.client.get('/condition/')
         self.assertFullResponse(response)
 
-    def testSingleCondition1(self):
+        self.client.defaults['HTTP_IF_MODIFIED_SINCE'] = EXPIRED_LAST_MODIFIED_STR
+        self.client.defaults['HTTP_IF_NONE_MATCH'] = '"%s"' % EXPIRED_ETAG
+        response = self.client.get('/condition/')
+        self.assertFullResponse(response)
+
+    def test_both_headers_2(self):
+        self.client.defaults['HTTP_IF_UNMODIFIED_SINCE'] = LAST_MODIFIED_STR
+        self.client.defaults['HTTP_IF_MATCH'] = '"%s"' % ETAG
+        response = self.client.get('/condition/')
+        self.assertFullResponse(response)
+
+        self.client.defaults['HTTP_IF_UNMODIFIED_SINCE'] = EXPIRED_LAST_MODIFIED_STR
+        self.client.defaults['HTTP_IF_MATCH'] = '"%s"' % EXPIRED_ETAG
+        response = self.client.get('/condition/')
+        self.assertEqual(response.status_code, 412)
+
+        self.client.defaults['HTTP_IF_UNMODIFIED_SINCE'] = LAST_MODIFIED_STR
+        self.client.defaults['HTTP_IF_MATCH'] = '"%s"' % EXPIRED_ETAG
+        response = self.client.get('/condition/')
+        self.assertEqual(response.status_code, 412)
+
+        self.client.defaults['HTTP_IF_UNMODIFIED_SINCE'] = EXPIRED_LAST_MODIFIED_STR
+        self.client.defaults['HTTP_IF_MATCH'] = '"%s"' % ETAG
+        response = self.client.get('/condition/')
+        self.assertEqual(response.status_code, 412)
+
+    def test_single_condition_1(self):
         self.client.defaults['HTTP_IF_MODIFIED_SINCE'] = LAST_MODIFIED_STR
         response = self.client.get('/condition/last_modified/')
         self.assertNotModified(response)
         response = self.client.get('/condition/etag/')
         self.assertFullResponse(response, check_last_modified=False)
 
-    def testSingleCondition2(self):
+    def test_single_condition_2(self):
         self.client.defaults['HTTP_IF_NONE_MATCH'] = '"%s"' % ETAG
         response = self.client.get('/condition/etag/')
         self.assertNotModified(response)
         response = self.client.get('/condition/last_modified/')
         self.assertFullResponse(response, check_etag=False)
 
-    def testSingleCondition3(self):
+    def test_single_condition_3(self):
         self.client.defaults['HTTP_IF_MODIFIED_SINCE'] = EXPIRED_LAST_MODIFIED_STR
         response = self.client.get('/condition/last_modified/')
         self.assertFullResponse(response, check_etag=False)
 
-    def testSingleCondition4(self):
+    def test_single_condition_4(self):
         self.client.defaults['HTTP_IF_NONE_MATCH'] = '"%s"' % EXPIRED_ETAG
         response = self.client.get('/condition/etag/')
         self.assertFullResponse(response, check_last_modified=False)
 
-    def testSingleCondition5(self):
+    def test_single_condition_5(self):
         self.client.defaults['HTTP_IF_MODIFIED_SINCE'] = LAST_MODIFIED_STR
         response = self.client.get('/condition/last_modified2/')
         self.assertNotModified(response)
         response = self.client.get('/condition/etag2/')
         self.assertFullResponse(response, check_last_modified=False)
 
-    def testSingleCondition6(self):
+    def test_single_condition_6(self):
         self.client.defaults['HTTP_IF_NONE_MATCH'] = '"%s"' % ETAG
         response = self.client.get('/condition/etag2/')
         self.assertNotModified(response)
         response = self.client.get('/condition/last_modified2/')
         self.assertFullResponse(response, check_etag=False)
 
-    def testInvalidETag(self):
+    def test_single_condition_7(self):
+        self.client.defaults['HTTP_IF_UNMODIFIED_SINCE'] = EXPIRED_LAST_MODIFIED_STR
+        response = self.client.get('/condition/last_modified/')
+        self.assertEqual(response.status_code, 412)
+        response = self.client.get('/condition/etag/')
+        self.assertFullResponse(response, check_last_modified=False)
+
+    def test_single_condition_8(self):
+        self.client.defaults['HTTP_IF_UNMODIFIED_SINCE'] = LAST_MODIFIED_STR
+        response = self.client.get('/condition/last_modified/')
+        self.assertFullResponse(response, check_etag=False)
+
+    def test_single_condition_9(self):
+        self.client.defaults['HTTP_IF_UNMODIFIED_SINCE'] = EXPIRED_LAST_MODIFIED_STR
+        response = self.client.get('/condition/last_modified2/')
+        self.assertEqual(response.status_code, 412)
+        response = self.client.get('/condition/etag2/')
+        self.assertFullResponse(response, check_last_modified=False)
+
+    def test_single_condition_head(self):
+        self.client.defaults['HTTP_IF_MODIFIED_SINCE'] = LAST_MODIFIED_STR
+        response = self.client.head('/condition/')
+        self.assertNotModified(response)
+
+    def test_invalid_etag(self):
         self.client.defaults['HTTP_IF_NONE_MATCH'] = r'"\"'
         response = self.client.get('/condition/etag/')
         self.assertFullResponse(response, check_last_modified=False)

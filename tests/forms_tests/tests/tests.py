@@ -5,13 +5,17 @@ import datetime
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import models
-from django.forms import Form, ModelForm, FileField, ModelChoiceField, CharField
+from django.forms import (
+    CharField, FileField, Form, ModelChoiceField, ModelForm,
+)
 from django.forms.models import ModelFormMetaclass
 from django.test import TestCase
 from django.utils import six
 
-from ..models import (ChoiceModel, ChoiceOptionModel, ChoiceFieldModel,
-    FileModel, Group, BoundaryModel, Defaults, OptionalMultiChoiceModel)
+from ..models import (
+    BoundaryModel, ChoiceFieldModel, ChoiceModel, ChoiceOptionModel, Defaults,
+    FileModel, Group, OptionalMultiChoiceModel,
+)
 
 
 class ChoiceFieldForm(ModelForm):
@@ -157,7 +161,7 @@ class FormsModelTestCase(TestCase):
         # FileModel with unicode filename and data #########################
         f = FileForm(data={}, files={'file1': SimpleUploadedFile('我隻氣墊船裝滿晒鱔.txt', 'मेरी मँडराने वाली नाव सर्पमीनों से भरी ह'.encode('utf-8'))}, auto_id=False)
         self.assertTrue(f.is_valid())
-        self.assertTrue('file1' in f.cleaned_data)
+        self.assertIn('file1', f.cleaned_data)
         m = FileModel.objects.create(file=f.cleaned_data['file1'])
         self.assertEqual(m.file.name, 'tests/\u6211\u96bb\u6c23\u588a\u8239\u88dd\u6eff\u6652\u9c54.txt')
         m.delete()
@@ -316,7 +320,7 @@ class EmptyLabelTestCase(TestCase):
             m = f.save()
             self.assertEqual(expected, getattr(m, key))
             self.assertEqual('No Preference',
-                             getattr(m, 'get_{0}_display'.format(key))())
+                             getattr(m, 'get_{}_display'.format(key))())
 
     def test_empty_field_integer(self):
         f = EmptyIntegerLabelChoiceForm()

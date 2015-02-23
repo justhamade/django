@@ -2,12 +2,12 @@
 from __future__ import unicode_literals
 
 import datetime
-import tempfile
 import os
+import tempfile
 
 from django.contrib.auth.models import User
 from django.contrib.contenttypes.fields import (
-    GenericForeignKey, GenericRelation
+    GenericForeignKey, GenericRelation,
 )
 from django.contrib.contenttypes.models import ContentType
 from django.core.files.storage import FileSystemStorage
@@ -32,6 +32,7 @@ class Article(models.Model):
     content = models.TextField()
     date = models.DateTimeField()
     section = models.ForeignKey(Section, null=True, blank=True)
+    sub_section = models.ForeignKey(Section, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
 
     def __str__(self):
         return self.title
@@ -315,7 +316,7 @@ class EmptyModel(models.Model):
         return "Primary key = %s" % self.id
 
 
-temp_storage = FileSystemStorage(tempfile.mkdtemp(dir=os.environ['DJANGO_TEST_TEMP_DIR']))
+temp_storage = FileSystemStorage(tempfile.mkdtemp())
 UPLOAD_TO = os.path.join(temp_storage.location, 'test_upload')
 
 
@@ -545,7 +546,7 @@ class Pizza(models.Model):
 
 
 class Album(models.Model):
-    owner = models.ForeignKey(User)
+    owner = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL)
     title = models.CharField(max_length=30)
 
 
@@ -654,7 +655,8 @@ class PrePopulatedPostLargeSlug(models.Model):
     """
     title = models.CharField(max_length=100)
     published = models.BooleanField(default=False)
-    slug = models.SlugField(max_length=1000)
+    # `db_index=False` because MySQL cannot index large CharField (#21196).
+    slug = models.SlugField(max_length=1000, db_index=False)
 
 
 class AdminOrderedField(models.Model):
@@ -822,3 +824,63 @@ class Worker(models.Model):
     work_at = models.ForeignKey(Restaurant)
     name = models.CharField(max_length=50)
     surname = models.CharField(max_length=50)
+
+
+# Models for #23329
+class ReferencedByParent(models.Model):
+    name = models.CharField(max_length=20, unique=True)
+
+
+class ParentWithFK(models.Model):
+    fk = models.ForeignKey(
+        ReferencedByParent, to_field='name', related_name='hidden+',
+    )
+
+
+class ChildOfReferer(ParentWithFK):
+    pass
+
+
+# Models for #23431
+class ReferencedByInline(models.Model):
+    name = models.CharField(max_length=20, unique=True)
+
+
+class InlineReference(models.Model):
+    fk = models.ForeignKey(
+        ReferencedByInline, to_field='name', related_name='hidden+',
+    )
+
+
+class InlineReferer(models.Model):
+    refs = models.ManyToManyField(InlineReference)
+
+
+# Models for #23604 and #23915
+class Recipe(models.Model):
+    rname = models.CharField(max_length=20, unique=True)
+
+
+class Ingredient(models.Model):
+    iname = models.CharField(max_length=20, unique=True)
+    recipes = models.ManyToManyField(Recipe, through='RecipeIngredient')
+
+
+class RecipeIngredient(models.Model):
+    ingredient = models.ForeignKey(Ingredient, to_field='iname')
+    recipe = models.ForeignKey(Recipe, to_field='rname')
+
+
+# Model for #23839
+class NotReferenced(models.Model):
+    # Don't point any FK at this model.
+    pass
+
+
+# Models for #23934
+class ExplicitlyProvidedPK(models.Model):
+    name = models.IntegerField(primary_key=True)
+
+
+class ImplicitlyGeneratedPK(models.Model):
+    name = models.IntegerField(unique=True)

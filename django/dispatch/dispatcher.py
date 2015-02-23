@@ -1,8 +1,10 @@
 import sys
 import threading
+import warnings
 import weakref
 
-from django.utils.six.moves import xrange
+from django.utils.deprecation import RemovedInDjango21Warning
+from django.utils.six.moves import range
 
 if sys.version_info < (3, 4):
     from .weakref_backports import WeakMethod
@@ -60,13 +62,13 @@ class Signal(object):
                 A function or an instance method which is to receive signals.
                 Receivers must be hashable objects.
 
-                If weak is True, then receiver must be weak-referencable.
+                If weak is True, then receiver must be weak referenceable.
 
                 Receivers must be able to accept keyword arguments.
 
-                If receivers have a dispatch_uid attribute, the receiver will
-                not be added if another receiver already exists with that
-                dispatch_uid.
+                If a receiver is connected with a dispatch_uid argument, it
+                will not be added if another receiver was already connected
+                with that dispatch_uid.
 
             sender
                 The sender to which the receiver should respond. Must either be
@@ -133,7 +135,7 @@ class Signal(object):
                 self.receivers.append((lookup_key, receiver))
             self.sender_receivers_cache.clear()
 
-    def disconnect(self, receiver=None, sender=None, weak=True, dispatch_uid=None):
+    def disconnect(self, receiver=None, sender=None, weak=None, dispatch_uid=None):
         """
         Disconnect receiver from sender for signal.
 
@@ -149,25 +151,28 @@ class Signal(object):
             sender
                 The registered sender to disconnect
 
-            weak
-                The weakref state to disconnect
-
             dispatch_uid
                 the unique identifier of the receiver to disconnect
         """
+        if weak is not None:
+            warnings.warn("Passing `weak` to disconnect has no effect.",
+                RemovedInDjango21Warning, stacklevel=2)
         if dispatch_uid:
             lookup_key = (dispatch_uid, _make_id(sender))
         else:
             lookup_key = (_make_id(receiver), _make_id(sender))
 
+        disconnected = False
         with self.lock:
             self._clear_dead_receivers()
-            for index in xrange(len(self.receivers)):
+            for index in range(len(self.receivers)):
                 (r_key, _) = self.receivers[index]
                 if r_key == lookup_key:
+                    disconnected = True
                     del self.receivers[index]
                     break
             self.sender_receivers_cache.clear()
+        return disconnected
 
     def has_listeners(self, sender=None):
         return bool(self._live_receivers(sender))
@@ -220,7 +225,8 @@ class Signal(object):
 
         If any receiver raises an error (specifically any subclass of
         Exception), the error instance is returned as the result for that
-        receiver.
+        receiver. The traceback is always attached to the error at
+        ``__traceback__``.
         """
         responses = []
         if not self.receivers or self.sender_receivers_cache.get(sender) is NO_RECEIVERS:
@@ -232,6 +238,8 @@ class Signal(object):
             try:
                 response = receiver(signal=self, sender=sender, **named)
             except Exception as err:
+                if not hasattr(err, '__traceback__'):
+                    err.__traceback__ = sys.exc_info()[2]
                 responses.append((receiver, err))
             else:
                 responses.append((receiver, response))

@@ -3,26 +3,30 @@ from __future__ import unicode_literals
 
 import importlib
 import json
-from datetime import datetime
 import re
 import unittest
+from datetime import datetime
 from xml.dom import minidom
+
+from django.core import management, serializers
+from django.db import connection, transaction
+from django.test import (
+    TestCase, TransactionTestCase, override_settings, skipUnlessDBFeature,
+)
+from django.test.utils import Approximate
+from django.utils import six
+from django.utils.six import StringIO
+
+from .models import (
+    Actor, Article, Author, AuthorProfile, Category, Movie, Player, Score,
+    Team,
+)
+
 try:
     import yaml
     HAS_YAML = True
 except ImportError:
     HAS_YAML = False
-
-
-from django.core import management, serializers
-from django.db import transaction, connection
-from django.test import TestCase, TransactionTestCase, override_settings
-from django.test.utils import Approximate
-from django.utils import six
-from django.utils.six import StringIO
-
-from .models import (Category, Author, Article, AuthorProfile, Actor, Movie,
-    Score, Player, Team)
 
 
 @override_settings(
@@ -267,6 +271,7 @@ class SerializersTransactionTestBase(object):
 
     available_apps = ['serializers']
 
+    @skipUnlessDBFeature('supports_forward_references')
     def test_forward_refs(self):
         """
         Tests that objects ids can be referenced before they are
